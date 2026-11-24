@@ -1403,8 +1403,8 @@ const MULTI = [
       L.block(30, 0, 2, 3); L.block(28, 0, 2, 12);
       const gateR = L.block(28, 12, 2, 3);
       L.block(24, 15, 8, 3);
-      const btnL = L.button(22, 15, 1.4, { color: 'green' });   // near right player opens left gate
-      const btnR = L.button(8, 15, 1.4, { color: 'purple' });  // near left player opens right gate
+      const btnL = L.button(22, 15, 1.4, { color: 'green', latch: true });   // near right player opens left gate
+      const btnR = L.button(8, 15, 1.4, { color: 'purple', latch: true });  // near left player opens right gate
       L.gate(gateL, 0, -3, () => btnL.down, { speed: 10, closeSpeed: 30, color: 'green' });
       L.gate(gateR, 0, -3, () => btnR.down, { speed: 10, closeSpeed: 30, color: 'purple' });
       // spikes pop mid-bridge when players swap sides
@@ -1414,7 +1414,7 @@ const MULTI = [
       L.on(() => L.all(p => p.x + 0.4 > 10 && p.x + 0.4 < 22), () => { L.swap = true; });
       L.on(() => L.all(p => p.x + 0.4 < 4 || p.x + 0.4 > 28), () => { L.swap = false; });
       L.door(0, 15);   // left door
-      L.door(29, 15);  // right door
+      L.door(30.4, 15);  // right door
     },
   },
   {
@@ -1425,11 +1425,11 @@ const MULTI = [
       L.block(0, 15, 32, 3);
       let stage = 0;
       const b1 = L.button(5, 15, 1.4, { color: 'green' });
-      const b2 = L.button(16, 15, 1.4, { color: 'purple' });
-      const b3 = L.button(27, 15, 1.4, { color: 'orange' });
+      const b2 = L.button(14, 15, 1.4, { color: 'purple' });
+      const b3 = L.button(21, 15, 1.4, { color: 'orange' });
       // pressing wrong order: saw punishes
       const saw1 = L.saw(10, 14.2, 0.75);
-      const saw2 = L.saw(21, 14.2, 0.75);
+      const saw2 = L.saw(18, 14.2, 0.75);
       L.on(() => stage === 0 && b1.down, () => { stage = 1; L.say('1 of 3'); });
       L.on(() => stage === 1 && b2.down, () => { stage = 2; L.say('2 of 3'); });
       L.on(() => stage === 2 && b3.down, () => { stage = 3; L.say('unlocked!'); });
@@ -1437,12 +1437,12 @@ const MULTI = [
       L.on(() => stage === 0 && (b2.down || b3.down), () => { saw1.vx = 8; saw2.vx = 8; L.say('wrong order!'); }, { repeat: true });
       L.on(() => stage === 1 && b3.down, () => { saw2.vx = 8; L.say('skip!'); }, { repeat: true });
       // gate only opens after all 3
-      L.block(21, 0, 2, 4);
-      const finalGate = L.block(21, 4, 2, 11);
+      L.block(24, 0, 2, 4);
+      const finalGate = L.block(24, 4, 2, 11);
       L.gate(finalGate, 0, -11, () => stage >= 3, { speed: 6, color: 'orange' });
-      const sp = L.spike(29, 15, 2, 'up', { hidden: true });
-      L.on(() => stage >= 3 && L.px > 27, () => sp.pop());
-      L.door(29, 15);
+      const sp = L.spike(27.5, 15, 1, 'up', { hidden: true });
+      L.on(() => stage >= 3 && L.px > 26, () => sp.pop());
+      L.door(29.8, 15);
     },
   },
   {
@@ -1477,8 +1477,8 @@ const MULTI = [
       const g1 = L.block(11, 4, 2, 11);
       L.block(20, 0, 2, 4);
       const g2 = L.block(20, 4, 2, 11);
-      L.gate(g1, 0, -5, () => b1.down, { speed: 12, closeSpeed: 10, color: 'red' });
-      L.gate(g2, 0, -5, () => b2.down, { speed: 12, closeSpeed: 10, color: 'red' });
+      L.gate(g1, 0, -5, () => b1.down || b2.down, { speed: 12, closeSpeed: 10, color: 'red' });
+      L.gate(g2, 0, -5, () => b2.down || b3.down, { speed: 12, closeSpeed: 10, color: 'red' });
       // overheld: a saw spawns
       let saw1 = false, saw2 = false, saw3 = false;
       L.on(() => !saw1 && b1.held > 2.0, () => { saw1 = true; const s = L.saw(7, -1, 0.7); s.vy = 12; L.say('held too long!'); });
@@ -1510,7 +1510,8 @@ const MULTI = [
       const sp2 = L.spike(17, 13, 2, 'up', { hidden: true });
       L.on(() => L.any(p => p.x + 0.4 > 12 && p.x + 0.4 < 14), () => sp1.pop());
       L.on(() => L.any(p => p.x + 0.4 > 17 && p.x + 0.4 < 19), () => sp2.pop());
-      L.door(16, 15);
+      L.block(15, 15, 2, 3);
+      L.door(15.4, 15);
     },
   },
   {
@@ -1560,13 +1561,13 @@ const MULTI = [
   {
     name: 'The Big Push',
     build(L) {
-      L.spawn(2, 15);
+      L.spawn(8, 15);
       L.text(3, 5, 'Crates everywhere. Only one matters.');
       L.block(0, 11, 6, 7); L.block(6, 15, 26, 3);
       // two crates: one mimic, one real, and room to manoeuvre
       L.crate(1, 11, 1, { mimic: true });
       const realCrate = L.crate(4, 11);
-      const btn = L.button(24, 15, 2.4, { color: 'orange' });
+      const btn = L.button(14, 15, 2.4, { color: 'orange' });
       const cage = [L.block(27, 10, 4.5, 0.5), L.block(27, 10.5, 0.5, 4.5), L.block(31, 10.5, 0.5, 4.5)];
       cage.forEach(c => L.gate(c, 0, -7, () => btn.down, { speed: 3, closeSpeed: 20, color: 'orange' }));
       L.on(() => L.players.some(p => p.done), () => L.wait(0.4, () => { realCrate.gone = true; L.say('crate broke'); }));
@@ -1591,12 +1592,11 @@ const MULTI = [
       L.gate(lift, 0, -8.4, () => L.t >= hic && (b1.down || b2.down), { speed: 4, color: 'blue' });
       L.on(() => lift.y < 10, () => { hic = L.t + 1; L.say('careful'); });
       // spikes at top platform after reaching it
-      const st = L.spike(17, 6, 3, 'up', { hidden: true });
+      const st = L.spike(17, 6, 2, 'up', { hidden: true });
       L.on(() => L.py < 7 && L.px < 20, () => st.pop());
-      // fake door visible, real door hidden
+      // fake door visible, real door up top past the second button
       const fake = L.door(28, 15, { fake: true });
-      L.block(19, 6, 2, 1, { hidden: true });
-      L.door(19, 6);
+      L.door(29, 6);
       L.on(() => L.touch(fake), () => {
         L.fakeWin();
         L.wait(1.2, () => { L.drop(trap, 0); L.mirror(); L.banner = { text: 'JK', sub: 'platform above has the real door', t: 0, life: 2 }; });
@@ -1847,12 +1847,12 @@ const SPECIAL = [
         const o = L.players.find((q) => q !== p);
         if (p.y < o.y - 3) { L.yank(o, 0, -11 * L.g); L.say('pull!'); }
       });
-      const s1 = L.spike(10, 11, 1, 'up', { hidden: true });
-      const s2 = L.spike(16, 7, 1, 'up', { hidden: true });
-      L.on(() => L.py < 11 && L.px > 8.5, () => s1.pop());
-      L.on(() => L.py < 7 && L.px > 14.5, () => s2.pop());
+      const s1 = L.spike(12, 11, 1, 'up', { hidden: true });
+      const s2 = L.spike(18, 7, 1, 'up', { hidden: true });
+      L.on(() => L.py < 11 && L.px > 10.5, () => s1.pop());
+      L.on(() => L.py < 7 && L.px > 16.5, () => s2.pop());
       const saw = L.saw(-2, 14.2, 0.8);
-      L.on(() => L.px > 5, () => { saw.vx = 6; });
+      L.on(() => L.px > 5, () => { saw.vx = 4.5; });
       L.door(29, 15);
     },
   },
@@ -1887,9 +1887,9 @@ const SPECIAL = [
       const c1 = L.block(9, 0, 3, 8);
       const c2 = L.block(17, 0, 3, 8);
       const c3 = L.block(25, 0, 3, 8);
-      L.on(() => L.px > 7, () => L.drop(c1, 0.12, { land: true }));
-      L.on(() => L.px > 15, () => L.drop(c2, 0.12, { land: true }));
-      L.on(() => L.px > 23, () => L.drop(c3, 0.12, { land: true }));
+      L.on(() => L.px > 7, () => L.drop(c1, 0.45, { land: true }));
+      L.on(() => L.px > 15, () => L.drop(c2, 0.45, { land: true }));
+      L.on(() => L.px > 23, () => L.drop(c3, 0.45, { land: true }));
       const s1 = L.spike(12, 15, 1, 'up', { hidden: true });
       const s2 = L.spike(20, 15, 1, 'up', { hidden: true });
       L.on(() => L.px > 10.5, () => s1.pop());
@@ -1924,7 +1924,7 @@ const SPECIAL = [
       L.spawn(2, 15);
       L.text(2, 6, 'Crumbling floor and a tightening chain.');
       L.block(0, 15, 5, 3);
-      for (let x = 5; x < 25; x++) L.block(x, 15, 1, 1, { crumble: 0.1 });
+      for (let x = 5; x < 25; x++) L.block(x, 15, 1, 1, { crumble: 0.14 });
       L.block(25, 15, 7, 3);
       L.on(() => L.px > 8, () => L.setRope(2.0));
       L.on(() => L.px > 15, () => { L.swapPlaces(); L.say('swapped!'); });
@@ -2000,11 +2000,11 @@ const SPECIAL = [
       L.text(2, 5, 'The ultimate chained test. Every trap combined.');
       L.block(0, 15, 6, 3);
       // crumble section with shortening rope
-      for (let x = 6; x < 14; x++) L.block(x, 15, 1, 1, { crumble: 0.1 });
+      for (let x = 6; x < 14; x++) L.block(x, 15, 1, 1, { crumble: 0.14 });
       L.block(14, 15, 4, 3);
       // overhead crusher
       const c = L.block(14, 0, 4, 8);
-      L.on(() => L.px > 12, () => L.drop(c, 0.08, { land: true }));
+      L.on(() => L.px > 12, () => L.drop(c, 0.85, { land: true }));
       // gravity pad section
       L.block(18, 15, 6, 3);
       L.block(18, 0, 6, 3);

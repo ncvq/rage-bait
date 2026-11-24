@@ -143,69 +143,66 @@ const [onlyCourse, onlyLevel] = process.argv.slice(2);
         if (st.s === 6) { k.right = 1; return J(st, 'c', p.grounded && L.px > 14.2); }
         return false;
       },
-      // 11 Groundwork: run fast over crumble, jump gaps, avoid saw
+      // 11 Groundwork: run over crumble, jump hidden spikes on islands & end
       (L, k, st) => {
         k.right = 1;
-        return J(st, 'a', L.px > 7.2 && L.player.grounded) || J(st, 'b', L.px > 13.5 && L.player.grounded) ||
-               J(st, 'c', L.px > 20.8 && L.player.grounded) || J(st, 'd', L.px > 24.5 && L.player.grounded);
+        return J(st, 'a', L.px > 11.4 && L.player.grounded) || J(st, 'b', L.px > 18.6 && L.player.grounded) ||
+               (J(st, 'c', L.px > 27.6 && L.player.grounded) ? 10 : false);
       },
-      // 12 Gravity Well: use pads, avoid hidden spikes
+      // 12 Gravity Well: hit pads cleanly (brake on floor pads so you rise into ceiling pads), follow fleeing door
+      (L, k, st) => {
+        const d = L.doors[0];
+        if (d.tween || d.x < 25) { k.left = 1; return false; }
+        if (L.g < 0 && !L.player.grounded) {
+          if (L.px > 7.5 && L.px < 10) { k.left = 1; return false; }
+          if (L.px > 15.6 && L.px < 18) { k.left = 1; return false; }
+        }
+        k.right = 1;
+        return false;
+      },
+      // 13 Saw Alley: trigger s1, wait briefly for it to move ahead, walk under s2 (y=13.5), jump end spike
+      (L, k, st) => {
+        if (L.px > 6.5 && !st.w) st.w = L.t + 1.4;
+        if (st.w && L.t < st.w) return false;
+        k.right = 1;
+        return J(st, 'b', L.px > 27.6 && L.player.grounded) ? 10 : false;
+      },
+      // 14 Flip Flop: pad up (brake mid-air to land on ceiling 0..6), jump ceiling gaps with 0.18s lag
+      (L, k, st) => {
+        if (L.g < 0 && !L.player.grounded && ((L.px > 4.2 && L.px < 6) || (L.px > 20.2 && L.px < 22))) { k.left = 1; return false; }
+        if (L.g < 0 && L.px > 26.5) { k.left = 1; return false; }
+        k.right = 1;
+        return J(st, 'a', L.g < 0 && L.player.grounded && L.px > 4.2) ||
+               J(st, 'c', L.g < 0 && L.player.grounded && L.px > 21.0) ||
+               (J(st, 'd', L.g > 0 && L.player.grounded && L.px > 27.6) ? 10 : false);
+      },
+      // 15 Mirror Maze: short-hop gap 10..12, jump s1, run right to trigger door flee to x=2, then run back left
+      (L, k, st) => {
+        const d = L.doors[0];
+        if (d.tween || d.x < 10) st.back = 1;
+        const dir = st.back ? -1 : 1;
+        if ((dir > 0) !== L.invert) k.right = 1; else k.left = 1;
+        if (!st.back) return (J(st, 'a', L.px > 9.0 && L.player.grounded) ? 5 : false) ||
+                             J(st, 'b', L.px > 12.0 && L.player.grounded) ||
+                             J(st, 'c', L.px > 19.4 && L.player.grounded) || J(st, 'd', L.px > 24.6 && L.player.grounded);
+        return J(st, 'e', L.px < 27.6 && L.player.grounded) || J(st, 'f', L.px < 22.4 && L.player.grounded) ||
+               J(st, 'g', L.px < 15.6 && L.player.grounded) || J(st, 'h', L.px < 12.4 && L.player.grounded);
+      },
+      // 16 Thin Ice: sprint across crumble, jump final hidden spike into door
       (L, k, st) => {
         k.right = 1;
-        return J(st, 'a', L.px > 5.5 && L.player.grounded && L.g > 0) ||
-               J(st, 'b', L.px > 10 && L.player.grounded) ||
-               J(st, 'c', L.px > 13.5 && L.player.grounded && L.g > 0) ||
-               J(st, 'd', L.px > 25, 'skip');
+        return J(st, 'a', L.px > 27.6 && L.player.grounded) ? 10 : false;
       },
-      // 13 Saw Alley: run, avoid saws
-      (L, k, st) => { k.right = 1; return J(st, 'a', L.px > 28.5 && L.player.grounded); },
-      // 14 Flip Flop: use pads, lag-adjusted jumps (press early)
-      (L, k, st) => {
-        k.right = 1;
-        return J(st, 'a', L.px > 3.4 && L.player.grounded && L.g > 0) ||
-               J(st, 'b', L.px > 10.5 && L.player.grounded) ||
-               J(st, 'c', L.px > 18.5 && L.player.grounded && L.g > 0) ||
-               J(st, 'd', L.px > 25.4 && L.player.grounded);
-      },
-      // 15 Mirror Maze: ignore mirror/invert, navigate to actual door coords
-      (L, k, st) => {
-        // the real second door is placed at x=2, so after mirror is off, go right to door at x≈29
-        if (L.invert) { k.left = 1; k.right = 0; } else { k.right = 1; k.left = 0; }
-        return J(st, 'a', L.px > 10 && L.player.grounded) || J(st, 'b', L.px > 25 && L.player.grounded);
-      },
-      // 16 Thin Ice: run fast, jump at halfway for crusher dodge, then jump final saw
-      (L, k, st) => {
-        k.right = 1;
-        return J(st, 'a', L.px > 14.5 && L.player.grounded) || J(st, 'b', L.px > 27.5 && L.player.grounded);
-      },
-      // 17 The Betrayal: avoid evil flag, jump over spike2, then climb hidden platforms
+      // 17 The Betrayal: jump s1, jump onto hidden step (21,13.5), then (25,12) into real door
       (L, k, st) => {
         const p = L.player;
-        // phase 0: run right; jump at x=3.5 to clear s1 (x=5–8), jump at x=21 to clear s2 (x=22–26)
-        if (!st.s) {
-          k.right = 1;
-          if (L.px > 24.5 && p.grounded) { st.s = 1; return false; }
-          return J(st, 'a', L.px > 3.5 && p.grounded) || J(st, 'b', L.px > 21 && p.grounded);
+        if (!st.step1) {
+          k.right = L.px < 21.8;
+          if (p.grounded && p.y < 13.5) st.step1 = 1;
+          return J(st, 'a', L.px > 3.6 && p.grounded) || J(st, 'b', L.px > 19.6 && p.grounded);
         }
-        // phase 1: arrived past spike zone on floor (~x=26). Walk back left to x≈22, jump to y=13.5 platform
-        if (!st.s2) {
-          k.right = 0; k.left = 0;
-          if (p.grounded && p.y > 14) {
-            if (L.px > 22.5) { k.left = 1; return false; }   // walk back toward x=22
-            return J(st, 'c', L.px > 21.5 && p.grounded);    // jump to y=13.5 block (x=21–23)
-          }
-          if (p.y < 14) st.s2 = 1;   // landed on elevated platform
-          return false;
-        }
-        // phase 2: on y=13.5 platform, walk right and jump to y=12 platform (x=25–27)
-        if (!st.s3) {
-          k.right = 1;
-          if (J(st, 'd', L.px > 22.5 && p.grounded && p.y < 14)) return true;
-          if (p.grounded && p.y < 13) st.s3 = 1;
-          return false;
-        }
-        // phase 3: on y=12 platform, walk right into real door at x=25
-        k.right = 1; return false;
+        k.right = 1;
+        return J(st, 'c', L.px > 22.2 && p.grounded && p.y < 13.5);
       },
       // 18 Crusher Gauntlet: dash through each corridor, stay away from landing zones
       (L, k, st) => {
@@ -213,48 +210,39 @@ const [onlyCourse, onlyLevel] = process.argv.slice(2);
         return J(st, 'a', L.px > 5.6 && L.player.grounded) || J(st, 'b', L.px > 10.5 && L.player.grounded) ||
                J(st, 'c', L.px > 16.5 && L.player.grounded) || J(st, 'd', L.px > 22.5 && L.player.grounded);
       },
-      // 19 Chaos Engine: navigate with shifting controls
+      // 19 Chaos Engine: navigate with shifting controls and 0.14s jump lag (~1.12 tiles early)
       (L, k, st) => {
         if (L.invert) { k.left = 1; k.right = 0; } else { k.right = 1; k.left = 0; }
-        return J(st, 'a', L.px > 8.6 && L.player.grounded) || J(st, 'b', L.px > 16.6 && L.player.grounded) ||
-               J(st, 'c', L.px > 24.6 && L.player.grounded);
+        return J(st, 'a', L.px > 6.5 && L.player.grounded) || J(st, 'b', L.px > 14.5 && L.player.grounded) ||
+               J(st, 'c', L.px > 22.5 && L.player.grounded);
       },
-      // 20 The Reckoning: gravity, crumble, invert, crusher, lag, then single door moves up
-      // Door starts at (28,15), moves to (29.5,9.5) when approached.
-      // Staircase: floor(y=15) → y=13 (x=26–28.5) → y=11 (x=28.5–31) → y=9.5 (x=29–32) → door(29.5,9.5)
+      // 20 The Reckoning: gravity flip, crumble+invert, crusher, saw2, climb to fleeing door
       (L, k, st) => {
         const p = L.player;
-        if (L.invert) { k.left = 1; k.right = 0; } else { k.right = 1; k.left = 0; }
-        // phase 0: gravity flip zone (pads at x=4–6 and x=8–10), then crumble+invert stretch
-        if (!st.s) {
-          if (J(st, 'a', L.px > 3.5 && p.grounded && L.g > 0)) return true;  // jump before gravity pad
-          if (J(st, 'b', L.px > 7.5 && p.grounded)) return true;              // jump to restore gravity
-          if (p.grounded && L.px > 10 && L.px < 18) st.s = 1;
-          return false;
+        if (!st.ph) {
+          if (L.invert) k.left = 1; else k.right = 1;
+          if (L.px > 26.2) st.ph = 1;
+          return J(st, 'saw2', L.px > 23.0 && p.grounded);
         }
-        // phase 1: past the crusher island (x=18–22). Walk right to trigger door move.
-        if (!st.s2 && p.grounded && L.px > 22) st.s2 = 1;
-        if (!st.s2) return false;
-        // phase 2: walk right until door moves (triggered at ~x=26), then climb step 1
-        if (!st.s3) {
-          if (J(st, 'c', L.px > 26.5 && p.grounded && p.y > 14)) return true;
-          if (p.grounded && p.y < 13.5) st.s3 = 1;
-          return false;
+        if (st.ph === 1) {
+          if (L.px > 25.0 && p.y > 13.5) { k.left = 1; return false; }
+          k.right = L.px < 27.5;
+          if (p.grounded && p.y < 13.5) st.ph = 2;
+          return J(st, 's1', p.grounded && L.px <= 25.1);
         }
-        // phase 3: on y=13 platform, jump to y=11 platform (x=28.5–31)
-        if (!st.s4) {
-          if (J(st, 'd', L.px > 27.5 && p.grounded && p.y < 13.5)) return true;
-          if (p.grounded && p.y < 11.5) st.s4 = 1;
-          return false;
+        if (st.ph === 2) {
+          k.right = L.px < 29.2;
+          if (p.grounded && p.y < 11.5) st.ph = 3;
+          return J(st, 's2', p.grounded && L.px > 27.2);
         }
-        // phase 4: on y=11 platform, jump to solid block at y=9.5 (x=29–32) then walk into door
-        if (!st.s5) {
-          if (J(st, 'e', L.px > 29 && p.grounded && p.y < 11.5)) return true;
-          if (p.grounded && p.y < 10) st.s5 = 1;
-          return false;
+        if (st.ph === 3) {
+          if (L.px > 28.8 && p.grounded && p.y > 9.5) { k.left = 1; return false; }
+          k.right = 1;
+          if (p.grounded && p.y < 9.5) st.ph = 4;
+          return J(st, 's3', p.grounded && L.px <= 28.9);
         }
-        // phase 5: on top block, walk right into door at x=29.5 (wait for tween to finish)
-        k.right = 1; return false;
+        if (L.px > 30.2) k.left = 1; else k.right = 1;
+        return false;
       },
       // 21 Leap of Faith: jump the first hole into the middle one, land in the bonus room, walk to its portal
       (L, k, st) => { k.right = 1; return J(st, 'a', L.player.grounded && L.px > 2.9); },
@@ -462,83 +450,137 @@ const [onlyCourse, onlyLevel] = process.argv.slice(2);
         if (st.ph === 3) { B.to(24.7); if (lift.y < 6.1 && !st.k && A.to(16.6)) A.jumpOnce('sp'); if (st.k || A.p.vy < 0) { st.k = 1; A.go(1); } if (A.x > 21 && A.g && A.y < 7) st.ph = 4; return; }
         if (st.ph === 4) { const d = L.doors[0]; for (const P of [A, B]) { if (d.y > 10 || d.tween) { if (P.y < 7) { P.go(-1); if (P.g && P.x < 22.6) P.jumpOnce('back'); } else P.to(25.6); } else P.to(29.6); } }
       },
-      // 11 Hot Potato: A stands on button, B sprints through gate
+      // 11 Hot Potato: both clear x=6 first, A holds btn, B crosses to b2, A crosses, both enter door
       (L, A, B, st) => {
-        const gate = L.blocks[1], btn = L.buttons[0];
-        if (!st.ph) { A.to(7.7); if (btn.down && gate.y < 9) st.ph = 1; return; }
-        if (st.ph === 1) { A.to(7.7); B.go(1); if (B.x > 18.4) B.jumpOnce('sp'); if (B.p.done) st.ph = 2; return; }
-        if (st.ph === 2) { A.go(1); if (A.x > 18.4) A.jumpOnce('sp'); return; }
+        const gate = L.blocks[2];
+        if (!st.ph) { A.to(6.2); B.to(6.2); if (A.x > 6 && B.x > 6) st.ph = 0.5; return; }
+        if (st.ph === 0.5) { A.to(7.7); B.to(14); if (L.buttons[0].down && gate.y < -2.5 && near(B, 14, 0.5)) st.ph = 1; return; }
+        if (st.ph === 1) { A.to(7.7); B.go(1); if (B.x > 18.6 && B.g) B.jumpOnce('sp'); if (B.x > 24.4 && B.g) st.ph = 2; return; }
+        if (st.ph === 2) { B.to(24.7); A.go(1); if (A.x > 18.6 && A.g) A.jumpOnce('sp'); if (A.x > 23 && A.g) st.ph = 3; return; }
+        A.go(1); B.go(1);
       },
-      // 12 Switcheroo: A presses right btn, B presses left btn, both pass through opposite gates
+      // 12 Switcheroo: latch partner's gate, then each runs into their door
       (L, A, B, st) => {
-        const gateL = L.blocks[0], gateR = L.blocks[1], btnL = L.buttons[0], btnR = L.buttons[1];
-        if (!st.ph) {
-          A.to(8.7); B.to(22.7);
-          if (btnL.down && btnR.down) st.ph = 1;
-          return;
+        const btnL = L.buttons[0], btnR = L.buttons[1];
+        if (!st.ph) { A.to(8.7); B.to(22.7); if (btnL.down && btnR.down) st.ph = 1; return; }
+        A.go(-1); B.go(1);
+      },
+      // 13 Chain Reaction: press b1, b2, b3 in order (jumping stationary saws), then enter door
+      (L, A, B, st) => {
+        const gate = L.blocks[2];
+        for (const P of [A, B]) {
+          P.go(1);
+          if (P.x > 8.2 && P.g) P.jumpOnce('s1');
+          if (P.x > 16.2 && P.g) P.jumpOnce('s2');
+          if (gate.y > -6 && P.x > 22.8) P.to(22.0);
+          if (gate.y <= -6 && P.x > 26.2 && P.g) P.jumpOnce('sp');
         }
-        if (st.ph === 1) { A.go(-1); B.go(1); if (A.x < 2.5) A.jumpOnce('in'); if (B.x > 29) B.jumpOnce('in'); return; }
-      },
-      // 13 Chain Reaction: A on b1, B on b2, then both rush b3
-      (L, A, B, st) => {
-        const b1 = L.buttons[0], b2 = L.buttons[1], b3 = L.buttons[2];
-        if (!st.ph) { A.to(5.7); B.to(5.7); if (b1.down) st.ph = 1; return; }
-        if (st.ph === 1) { A.to(5.7); B.to(16.7); if (b2.down) st.ph = 2; return; }
-        if (st.ph === 2) { A.go(1); B.go(1); return; }
       },
       // 14 Gravity Split: gate opens when anyone passes x=14; both go right, jump hidden spike early
       // Spike pops when leader passes x=24; fatal at x≈24.3 — must jump at x=23.5
       (L, A, B, st) => {
         for (const P of [A, B]) { P.go(1); if (P.x > 23.5 && P.g) P.jumpOnce('sp'); }
       },
-      // 15 Detonator: quick tap each button, sprint
+      // 15 Detonator: A holds b1 -> B crosses g1 to b2 -> A crosses g1 to b2 -> B crosses g2 to b3 -> A crosses g2
       (L, A, B, st) => {
-        const b1 = L.buttons[0], b2 = L.buttons[1];
-        if (!st.ph) { A.to(7.7); if (b1.down && b1.held < 1) st.ph = 1; return; }
-        if (st.ph === 1) { A.go(1); B.to(16.7); if (b2.down && b2.held < 1) st.ph = 2; return; }
-        if (st.ph === 2) { A.go(1); B.go(1); return; }
+        const g1 = L.blocks[2], g2 = L.blocks[4];
+        if (!st.ph) { A.to(7.7); if (g1.y < 1) B.go(1); else B.to(9.8); if (B.x > 16.2) st.ph = 1; return; }
+        if (st.ph === 1) { B.to(16.7); if (g1.y < 1) A.go(1); else A.to(9.8); if (A.x > 16.2) st.ph = 2; return; }
+        if (st.ph === 2) { A.to(16.7); if (g2.y < 1) B.go(1); else B.to(18.8); if (B.x > 25.2) st.ph = 3; return; }
+        if (st.ph === 3) { B.to(25.7); if (g2.y < 1) A.go(1); else A.to(18.8); if (A.x > 24.5) st.ph = 4; return; }
+        for (const P of [A, B]) { P.go(1); if (P.x > 27.6 && P.g) P.jumpOnce('sp', 10); }
       },
-      // 16 The See-Saw: A on left plat btn, B on right, both advance
+      // 16 The See-Saw: jump onto platforms, hold both buttons to lift archGate, then jump into door
       (L, A, B, st) => {
-        const btnL = L.buttons[0], btnR = L.buttons[1];
-        if (!st.ph) { A.to(10.7); B.to(20.7); if (btnL.down && btnR.down) st.ph = 1; return; }
-        if (st.ph === 1) { for (const P of [A, B]) P.to(16.15); return; }
+        const gate = L.blocks[5];
+        if (!st.ph) {
+          A.go(1); if (A.x > 6.8 && A.g) A.jumpOnce('up');
+          B.go(-1); if (B.x < 25.2 && B.g) B.jumpOnce('up');
+          if (A.y < 13 && B.y < 13 && A.g && B.g) st.ph = 1;
+          return;
+        }
+        if (st.ph === 1) { A.to(10.7); B.to(20.7); if (gate.y < -8.5) st.ph = 2; return; }
+        A.to(16); if (A.x > 11.8 && A.g) A.jumpOnce('sp', 18);
+        B.to(16); if (B.x < 20.0 && B.g) B.jumpOnce('sp', 18);
       },
-      // 17 Mimic City: use real crates, avoid mimics
+      // 17 Mimic City: push crate2 onto btn2 first, boost B to push crate1 onto btn, jump sp into door
       (L, A, B, st) => {
-        const realCrate = L.blocks.find(b => b.crate && !b.mimic && b.x === 5);
-        const crate2 = L.blocks.find(b => b.crate && !b.mimic && b.x === 18);
+        const c1 = L.blocks.find(b => b.crate && !b.mimic && b.y < 12);
+        const c2 = L.blocks.find(b => b.crate && !b.mimic && b.y >= 12);
         const btn = L.buttons[0], btn2 = L.buttons[1];
-        if (!st.ph) { A.to(8.45); if (near(A, 8.45) && A.g) { B.go(-1); if (B.x < 10.6) B.jumpOnce('head'); if (B.p.onP) st.ph = 1; } else B.to(10.6); return; }
-        if (st.ph === 1) { B.go(-1); B.jumpOnce('up'); if (B.y < 11 && B.g) st.ph = 2; return; }
-        if (st.ph === 2) { A.to(13); if (realCrate && realCrate.y > 13.5) { if (btn.down) st.ph = 3; } else { if (B.g && B.x < (realCrate ? realCrate.x + 2 : 7) && B.x > 1) B.go(1); } return; }
-        if (st.ph === 3) { for (const P of [A, B]) { P.go(1); if (P.x > 20 && crate2 && P.g && P.x < crate2.x + 2) P.jumpOnce('cr'); if (btn2.down) P.to(27.7); } return; }
+        if (!st.ph) {
+          // A jumps over mimic at x=14, pushes crate2 onto btn2 (x=22..24.4), then returns
+          if (!btn2.down) { A.go(1); if (A.x > 12.2 && A.x < 13.5 && A.g) A.jumpOnce('m2'); }
+          else { A.to(8.45); if (A.x < 16.5 && A.x > 15.2 && A.g) A.jumpOnce('m2b'); if (near(A, 8.45)) st.ph = 1; }
+          B.to(10.6);
+          return;
+        }
+        if (st.ph === 1) {
+          A.to(8.45);
+          if (near(A, 8.45) && A.g) { B.go(-1); if (B.x < 10.6) B.jumpOnce('head'); if (B.p.onP) st.ph = 2; }
+          else B.to(10.6);
+          return;
+        }
+        if (st.ph === 2) { B.go(-1); B.jumpOnce('up'); if (B.y < 11 && B.g) st.ph = 3; return; }
+        if (st.ph === 3) {
+          A.to(13);
+          if (!st.left) {
+            if (B.g && B.x < c1.x + 2.0 && B.x > c1.x) B.jumpOnce('over');
+            B.to(3.8); if (near(B, 3.8)) st.left = 1;
+          } else if (!btn.down) B.go(1);
+          else st.ph = 4;
+          return;
+        }
+        for (const P of [A, B]) {
+          P.go(1);
+          if (P.y > 13.5 && P.x > 12.5 && P.x < 14 && P.g) P.jumpOnce('m');
+          if (P.y > 13.5 && P.x > 19.6 && P.x < 21 && P.g) P.jumpOnce('sp');
+        }
       },
-      // 18 Rope-a-Dope: both go right, jump gaps; ignore swap (positions are correct)
+      // 18 Rope-a-Dope: both go right, jump gaps before edges
       (L, A, B, st) => {
         for (const P of [A, B]) {
           P.go(1);
-          for (const [x, n] of [[8.5, 'a'], [16.5, 'b'], [24.5, 'c']]) if (P.x > x && P.g) P.jumpOnce(n);
+          for (const [x, n] of [[7.3, 'a'], [15.3, 'b'], [23.3, 'c']]) if (P.x > x && P.g) P.jumpOnce(n);
         }
       },
-      // 19 The Big Push: use real crate to open gate
+      // 19 The Big Push: boost B onto ledge, push realCrate onto btn (x=14), jump sp into door
       (L, A, B, st) => {
-        const realCrate = L.blocks.find(b => b.crate && !b.mimic && b.x === 4);
+        const c = L.blocks.find(b => b.crate && !b.mimic);
         const btn = L.buttons[0];
-        if (!st.ph) { A.to(8.45); if (near(A, 8.45) && A.g) { B.go(-1); if (B.x < 10.6) B.jumpOnce('head'); if (B.p.onP) st.ph = 1; } else B.to(10.6); return; }
+        if (!st.ph) {
+          A.to(6.45);
+          if (near(A, 6.45) && A.g) { B.go(-1); if (B.x < 8.6) B.jumpOnce('head'); if (B.p.onP) st.ph = 1; }
+          else B.to(8.6);
+          return;
+        }
         if (st.ph === 1) { B.go(-1); B.jumpOnce('up'); if (B.y < 11 && B.g) st.ph = 2; return; }
-        if (st.ph === 2) { A.to(13); if (realCrate && realCrate.y > 13.5 && btn.down) st.ph = 3; else if (realCrate && B.g && B.x < realCrate.x + 2 && B.x > 1) B.go(1); return; }
-        if (st.ph === 3) { for (const P of [A, B]) { P.go(1); if (P.x > 20 && P.g) P.jumpOnce('sp'); P.to(28.7); } return; }
+        if (st.ph === 2) {
+          A.to(18);
+          if (!st.left) {
+            if (B.g && B.x < c.x + 1.8 && B.x > c.x) B.jumpOnce('over');
+            B.to(2.8); if (near(B, 2.8)) st.left = 1;
+          } else if (c.y < 13.5) B.go(1);
+          else if (!st.behind) { B.to(c.x - 0.8); if (B.y > 13.5 && B.x < c.x) st.behind = 1; }
+          else if (c.x < 14.2) B.go(1);
+          else st.ph = 3;
+          return;
+        }
+        for (const P of [A, B]) {
+          P.go(1);
+          if (P.x > c.x - 1.5 && P.x < c.x + 0.5 && P.g) P.jumpOnce('cr');
+          if (P.x > 19.6 && P.x < 21 && P.g) P.jumpOnce('sp');
+        }
       },
-      // 20 No Way Out: lift to upper platform, go to real door
+      // 20 No Way Out: lift B up to b2, lower lift for A, lift A up, both enter door at (29,6)
       (L, A, B, st) => {
-        const lift = L.blocks.find(b => b.h === 0.6);
+        const lift = L.blocks[3];
         const ride = (P, nm) => { if (P.g && P.y > 14) { if (P.x < 13.1) P.go(1); else { P.go(1); P.jumpOnce(nm); } } else if (!P.g && P.x > 14.8) P.go(0); else if (!P.g) P.go(1); };
-        if (!st.ph) { ride(B, 'on'); if (lift && B.g && Math.abs(B.p.y + B.p.h - lift.y) < 0.1) st.ph = 1; return; }
-        if (st.ph === 1) { A.to(5.7); if (lift && lift.y < 6.5 && !st.j && B.to(15.6)) B.jumpOnce('sp'); if (st.j || B.p.vy < 0) { st.j = 1; B.go(1); } if (B.x > 19 && B.g && B.y < 7) st.ph = 2; return; }
-        if (st.ph === 2) { B.to(20.5); if (lift && lift.y <= 14.3 && !st.r) A.to(9); if (!lift || lift.y > 14.3 || st.r) { st.r = 1; ride(A, 'on'); if (A.g && A.y < 14.3) st.ph = 3; } return; }
-        if (st.ph === 3) { B.to(20.5); if (lift && lift.y < 6.5 && !st.k && A.to(15.6)) A.jumpOnce('sp'); if (st.k || A.p.vy < 0) { st.k = 1; A.go(1); } if (A.x > 19 && A.g && A.y < 7) st.ph = 4; return; }
-        if (st.ph === 4) { for (const P of [A, B]) P.to(20.5); }
+        if (!st.ph) { ride(B, 'on'); if (B.g && Math.abs(B.p.y + B.p.h - lift.y) < 0.05) st.ph = 1; return; }
+        if (st.ph === 1) { A.to(5.7); if (lift.y < 6.1 && !st.j && B.to(16.6)) B.jumpOnce('sp'); if (st.j || B.p.vy < 0) { st.j = 1; B.go(1); } if (B.x > 21 && B.g && B.y < 7) st.ph = 2; return; }
+        if (st.ph === 2) { B.to(23.5); if (lift.y <= 14.3 && !st.r) A.to(10); if (lift.y > 14.3 || st.r) { st.r = 1; ride(A, 'on'); if (A.g && A.y < 14.3 && Math.abs(A.p.y + A.p.h - lift.y) < 0.05) st.ph = 3; } return; }
+        if (st.ph === 3) { B.to(26.7); if (lift.y < 6.1 && !st.k && A.to(16.6)) A.jumpOnce('sp'); if (st.k || A.p.vy < 0) { st.k = 1; A.go(1); } if (A.x > 21 && A.g && A.y < 7) st.ph = 4; return; }
+        A.go(1); B.go(1);
       },
     ];
 
@@ -624,38 +666,78 @@ const [onlyCourse, onlyLevel] = process.argv.slice(2);
           else P.go(L.doors[0].x < 20 ? -1 : 1);
         });
       },
-      // 11 Short Leash: run together, jump pits
+      // 11 Short Leash: align and jump pits+spikes together
       (L, A, B, st) => {
+        if (!st.al) { A.to(5, 0.05); B.to(5, 0.05); if (near(A, 5, 0.08) && near(B, 5, 0.08)) st.al = 1; return; }
         pair(A, B, (P) => {
           P.go(1);
-          if (P.x > 8.2 && P.g) P.jumpOnce('p1');
-          if (P.x > 16.2 && P.g) P.jumpOnce('p2');
-          if (P.x > 24.2 && P.g) P.jumpOnce('p3');
+          if (P.x > 8.1) P.jumpOnce('p1');
+          if (P.x > 16.1) P.jumpOnce('p2');
+          if (P.x > 24.1) P.jumpOnce('p3');
         });
       },
-      // 12 Tandem Vault: leap ledges together
+      // 12 Tandem Vault: boost onto ledge 1, haul partner, boost onto ledge 2, drop to door
       (L, A, B, st) => {
+        if (!st.ph) {
+          A.to(9.3);
+          if (near(A, 9.3, 0.25) && A.g) { B.go(1); if (B.x > 7.8) B.jumpOnce('h1'); if (B.p.onP) st.ph = 1; }
+          else B.to(7.6);
+          return;
+        }
+        if (st.ph === 1) { B.go(1); B.jumpOnce('u1'); if (B.y < 11 && B.g && B.x > 10.2) st.ph = 2; return; }
+        if (st.ph === 2) {
+          B.to(13.7); if (B.x > 11.2 && B.x < 12 && B.g) B.jumpOnce('s1b', 16);
+          if (A.y > 11) A.go(1); else A.to(11.0);
+          if (A.p.hang > 0 && !A.g && !(L.t < st.cool)) { A.jump(); st.cool = L.t + 0.3; }
+          if (A.y < 11 && A.g && A.x > 10.2) st.ph = 3;
+          return;
+        }
+        if (st.ph === 3) {
+          if (A.x > 11.1 && A.x < 12 && A.g) A.jumpOnce('s1a', 12);
+          A.to(13.6);
+          if (near(A, 13.6, 0.25) && A.g && B.x > 13.3 && B.g) { B.to(13.6); B.jumpOnce('h2'); if (B.p.onP) st.ph = 4; }
+          else if (B.p.onP) st.ph = 4;
+          else B.to(13.6);
+          return;
+        }
+        if (st.ph === 4) { B.go(1); B.jumpOnce('u2'); A.go(1); A.jumpOnce('a2'); if (B.y < 7 && B.g && B.x > 16.2) st.ph = 5; return; }
+        if (st.ph === 5) {
+          B.to(17.2);
+          if (A.y > 7.5 && A.p.hang <= 0 && !st.pulled) A.go(-1);
+          else { A.go(1); if (!A.g && A.p.hang > 0 && !(L.t < st.cool)) { st.pulled = 1; A.jump(); st.cool = L.t + 0.3; } }
+          if (A.y < 7 && A.g && A.x > 16.2) st.ph = 6;
+          return;
+        }
+        if (L.saws[0].x > 20 && L.saws[0].x < 28 && B.y < 8 && B.x > 19.0) { B.to(19.4); A.to(19.4); return; }
+        B.go(1); A.go(1);
+        if (B.x > 17.0 && B.x < 18 && B.g) B.jumpOnce('s2b', 20);
+        if (A.x > 17.0 && A.x < 18 && A.g) A.jumpOnce('s2a', 20);
+      },
+      // 13 Inverse Tether: align, flip up, coyote-jump gap+s1 onto pad down, jump gap+s3
+      (L, A, B, st) => {
+        if (!st.al) { A.to(4, 0.05); B.to(4, 0.05); if (near(A, 4, 0.08) && near(B, 4, 0.08)) st.al = 1; return; }
+        if (st.al === 1 && L.g > 0 && Math.max(A.x, B.x) > 24.4) {
+          A.to(24.9, 0.08); B.to(24.9, 0.08);
+          if (!A.g && A.p.hang > 0) A.jump();
+          if (!B.g && B.p.hang > 0) B.jump();
+          if (near(A, 24.9, 0.25) && near(B, 24.9, 0.25) && A.g && B.g) st.al = 2;
+          return;
+        }
         pair(A, B, (P) => {
-          P.go(1);
-          if (P.x > 8.5 && P.g) P.jumpOnce('l1');
-          if (P.x > 14.5 && P.g) P.jumpOnce('l2');
-          if (P.x > 20.5 && P.g) P.jumpOnce('l3');
+          if (L.g > 0 && !P.g && P.x > 19.5 && P.x < 21.5) P.go(0);
+          else P.go(1);
+          if (L.g < 0 && P.x > 12.2) P.jumpOnce('c1');
+          if (L.g > 0 && P.y > 14 && P.g && P.x > 21.0) P.jumpOnce('g2', 16);
+          if (st.al === 2 && P.x > 25.0 && P.g) P.jumpOnce('sp3');
         });
       },
-      // 13 Inverse Tether: pads flip gravity
+      // 14 Guillotine Run: align and sprint under crushers, jumping s1 & s2
       (L, A, B, st) => {
+        if (!st.al) { A.to(4); B.to(4); if (near(A, 4) && near(B, 4)) st.al = 1; return; }
         pair(A, B, (P) => {
           P.go(1);
-          if (P.x > 12.3 && P.g) P.jumpOnce('sp');
-          if (P.x > 24.3 && P.g) P.jumpOnce('sp2');
-        });
-      },
-      // 14 Guillotine Run: dodge crushers
-      (L, A, B, st) => {
-        pair(A, B, (P) => {
-          P.go(1);
-          if (P.x > 10.3 && P.g) P.jumpOnce('sp1');
-          if (P.x > 18.3 && P.g) P.jumpOnce('sp2');
+          if (P.x > 10.6 && P.g) P.jumpOnce('sp1');
+          if (P.x > 18.6 && P.g) P.jumpOnce('sp2');
         });
       },
       // 15 Slipknot: handle swaps while jumping pits
@@ -667,72 +749,72 @@ const [onlyCourse, onlyLevel] = process.argv.slice(2);
           if (P.x > 23.5 && P.g) P.jumpOnce('p3');
         });
       },
-      // 16 Fragile Unity: sprint across crumble
+      // 16 Fragile Unity: align tightly before crumble, sprint together, jump spikes
       (L, A, B, st) => {
+        if (!st.ph) { A.to(4, 0.03); B.to(4, 0.03); if (near(A, 4, 0.05) && near(B, 4, 0.05)) st.ph = 1; return; }
+        pair(A, B, (P) => P.go(1));
+        if (Math.max(A.x, B.x) > 16.6) { A.jumpOnce('m'); B.jumpOnce('m'); }
+        if (Math.max(A.x, B.x) > 26.5) { A.jumpOnce('sp'); B.jumpOnce('sp'); }
+      },
+      // 17 Twin Hazards: align and jump s1+sawR and s2
+      (L, A, B, st) => {
+        if (!st.al) { A.to(3.5); B.to(3.5); if (near(A, 3.5) && near(B, 3.5)) st.al = 1; return; }
         pair(A, B, (P) => {
           P.go(1);
-          if (P.x > 16.2 && P.g) P.jumpOnce('m');
-          if (P.x > 26.2 && P.g) P.jumpOnce('sp');
+          if (P.x > 14.0 && P.g) P.jumpOnce('s1');
+          if (P.x > 22.8 && P.g) P.jumpOnce('s2');
         });
       },
-      // 17 Twin Hazards: time jumps over saws and spikes
-      (L, A, B, st) => {
-        pair(A, B, (P) => {
-          P.go(1);
-          if (P.x > 13.2 && P.g) P.jumpOnce('s1');
-          if (P.x > 22.2 && P.g) P.jumpOnce('s2');
-        });
-      },
-      // 18 The Chasm Swing: cross the pit
-      (L, A, B, st) => {
-        pair(A, B, (P) => {
-          P.go(1);
-          if (P.x > 6.8 && P.g) P.jumpOnce('swing');
-          if (P.x > 24.2 && P.g) P.jumpOnce('sp');
-        });
-      },
-      // 19 Chaos Bond: navigate mirror and spikes
-      (L, A, B, st) => {
-        pair(A, B, (P) => {
-          P.go(1);
-          if (P.x > 10.2 && P.g) P.jumpOnce('s1');
-          if (P.x > 19.2 && P.g) P.jumpOnce('s2');
-          if (P.x > 25.2 && P.g) P.jumpOnce('s3');
-        });
-      },
-      // 20 Eternal Bond: combo obstacles to upper ledge, then climb hidden platforms to real door
+      // 18 The Chasm Swing: A anchors at ledge, B swings & chain-jumps across, then hauls A
       (L, A, B, st) => {
         if (!st.ph) {
-          pair(A, B, (P) => {
-            P.go(1);
-            if (P.x > 12.2 && P.g) P.jumpOnce('p1');   // leap over crusher zone (x=14–18)
-          });
-          if (A.g && B.g && A.x > 23 && B.x > 23) st.ph = 1;
+          A.to(7.5); B.go(1);
+          if (B.x > 7.5 && B.g) B.jumpOnce('j1');
+          if (B.x > 11.5 && B.p.hang > 0) { B.jumpOnce('j2'); st.ph = 1; }
           return;
         }
-        // arrived past x=23 on the floor (y≈15). Walk back to x≈22 (above hidden block at y=13)
         if (st.ph === 1) {
-          pair(A, B, (P) => {
-            const tgt = P.y < 14 ? 25.5 : 22;    // if already elevated, go toward upper block
-            P.to(tgt);
-            if (near(P, 22, 0.6) && P.g && P.y > 13) P.jumpOnce('up1');  // jump to hidden block at y=13
-          });
-          if (A.g && B.g && A.y < 14 && B.y < 14) st.ph = 2;
+          B.go(1);
+          if (B.x > 13.0) { if (A.x < 11.2) A.go(1); else A.go(0); if (A.x > 7.9 && A.g) A.jumpOnce('ja'); } else A.to(7.9);
+          if (!A.g && A.p.hang > 0 && !(L.t < st.cool)) { A.jump(); st.cool = L.t + 0.3; }
+          if (B.x > 16.5 && B.g) st.ph = 2;
           return;
         }
-        // on y=13 platform (x=21–23). Must jump BEFORE walking off edge at x=23.
-        // From y=13 block, jump apex reaches y≈9.2 (centre), easily clears y=11 target block.
-        // From floor (y=15) the apex is only y≈11.6 — insufficient to land on y=11. Must jump from platform.
         if (st.ph === 2) {
-          pair(A, B, (P) => {
-            P.go(1);
-            if (P.x > 22 && P.g && P.y < 14) P.jumpOnce('up2');  // jump while still on y=13 block
-          });
-          if (A.g && B.g && A.y < 12 && B.y < 12) st.ph = 3;
+          B.to(22); A.go(1);
+          if (!A.g && A.p.hang > 0 && !(L.t < st.cool)) { A.jump(); st.cool = L.t + 0.3; }
+          if (A.x > 16.5 && A.g) st.ph = 3;
           return;
         }
-        // on y=11 platform (x=25–27). Walk right into real door at x=25, y≈9.4
+        if (st.ph === 3) {
+          A.to(24.0, 0.1); B.to(24.0, 0.1);
+          if (near(A, 24.0, 0.2) && near(B, 24.0, 0.2) && A.g && B.g) st.ph = 4;
+          return;
+        }
+        B.go(1); A.go(1);
+        if (B.x > 25.1 && B.g) B.jumpOnce('sp');
+        if (A.x > 25.1 && A.g) A.jumpOnce('sp');
+      },
+      // 19 Chaos Bond: align, jump early for 0.16s lag (~1.3 tiles)
+      (L, A, B, st) => {
+        if (!st.al) { A.to(4); B.to(4); if (near(A, 4) && near(B, 4)) st.al = 1; return; }
+        pair(A, B, (P) => {
+          P.go(1);
+          if (P.x > 7.2 && P.g) P.jumpOnce('s1');
+          if (P.x > 16.2 && P.g) P.jumpOnce('s2');
+          if (P.x > 25.5 && P.g) P.jumpOnce('s3');
+        });
+      },
+      // 20 Eternal Bond: align tightly, sprint crumble & crusher, jump over pad onto hidden blocks to real door
+      (L, A, B, st) => {
+        if (!st.ph) {
+          const a = A.to(4.2, 0.08), b = B.to(4.2, 0.08);
+          if (a && b && Math.abs(A.p.vx) < 0.1 && Math.abs(B.p.vx) < 0.1) st.ph = 1;
+          return;
+        }
         pair(A, B, (P) => P.go(1));
+        if (Math.max(A.x, B.x) > 18.0) { A.jumpOnce('skipPad'); B.jumpOnce('skipPad'); }
+        if (A.g && A.y < 13.5 && A.x > 21.8) { A.jumpOnce('up2'); B.jumpOnce('up2'); }
       },
     ];
 

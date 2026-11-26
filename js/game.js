@@ -139,6 +139,9 @@
   const pressed = [new Set(), new Set()];
   const down = new Set();
   const touch = { left: false, right: false, jump: false };
+  const pad = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
+  const padPrev = [{}, {}];
+  let padCount = 0, hadPad = false;
   const KEYMAP = {
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
     ArrowUp: 'jump', KeyW: 'jump', Space: 'jump', KeyZ: 'jump', KeyK: 'jump',
@@ -150,6 +153,58 @@
     for (const c of ctl) c.left = c.right = c.jump = false;
     for (const code of down) { const k = KEYMAP[code]; if (k) ctl[owner(code)][k] = true; }
     for (const k in touch) if (touch[k]) ctl[0][k] = true;
+    for (let i = 0; i < 2; i++) for (const k in pad[i]) if (pad[i][k]) ctl[i][k] = true;
+  }
+  function pollPads() {
+    const raw = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : null;
+    const gps = raw ? Array.from(raw).filter(Boolean) : [];
+    padCount = gps.length;
+    if (!padCount) {
+      if (!hadPad) return;
+      hadPad = false;
+      for (let i = 0; i < 2; i++) { pad[i].left = pad[i].right = pad[i].jump = false; padPrev[i] = {}; }
+      syncCtl();
+      return;
+    }
+    hadPad = true;
+    const multi = MODE[game.mode].players > 1;
+    for (let i = 0; i < 2; i++) pad[i].left = pad[i].right = pad[i].jump = false;
+    gps.slice(0, 2).forEach((gp, idx) => {
+      const slot = multi ? idx : 0, b = gp.buttons || [], ax = gp.axes || [];
+      const btn = (n) => !!(b[n] && (b[n].pressed || b[n].value > 0.5));
+      const cur = {
+        left: btn(14) || (ax[0] || 0) < -0.35,
+        right: btn(15) || (ax[0] || 0) > 0.35,
+        up: btn(12) || (ax[1] || 0) < -0.5,
+        down: btn(13) || (ax[1] || 0) > 0.5,
+        jump: btn(0) || btn(2) || btn(12),
+        ok: btn(0) || btn(9),
+        back: btn(1),
+        aux: btn(3),
+        pause: btn(9),
+        sel: btn(8),
+      };
+      const prev = padPrev[idx], edge = (k) => cur[k] && !prev[k];
+      if (Object.keys(cur).some(edge)) audioOn();
+      if (game.state === 'play') {
+        if (cur.left) pad[slot].left = true;
+        if (cur.right) pad[slot].right = true;
+        if (cur.jump) pad[slot].jump = true;
+        if (edge('jump')) pressed[slot].add('jump');
+        if (edge('aux') || edge('sel')) onKey('KeyR');
+        else if (edge('pause')) onKey('Escape');
+      } else {
+        if (edge('left')) onKey('ArrowLeft');
+        if (edge('right')) onKey('ArrowRight');
+        if (edge('up')) onKey('ArrowUp');
+        if (edge('down')) onKey('ArrowDown');
+        if (edge('ok')) onKey('Enter');
+        else if (edge('back')) onKey('Escape');
+        else if (edge('aux') && game.state === 'mode') onKey('KeyL');
+      }
+      padPrev[idx] = cur;
+    });
+    syncCtl();
   }
   addEventListener('keydown', (e) => {
     audioOn();
@@ -161,7 +216,7 @@
     if (!e.repeat) onKey(e.code);
   });
   addEventListener('keyup', (e) => { down.delete(e.code); syncCtl(); });
-  addEventListener('blur', () => { down.clear(); touch.left = touch.right = touch.jump = false; syncCtl(); });
+  addEventListener('blur', () => { down.clear(); touch.left = touch.right = touch.jump = false; for (const p of pad) p.left = p.right = p.jump = false; syncCtl(); });
 
   // touch buttons (always player 1)
   const touchEl = document.getElementById('touch');
@@ -688,7 +743,7 @@
       this.idx = idx; this.level = new Level(idx, this.mode); this.state = 'play';
       particles = []; this.clearInput(); if (!keepMessage) this.message = null;
       this.strikes = 0; this.runDeaths = [0, 0];
-      if (MODE[this.mode].chained) this.level.banner = { text: 'SURPRISE!', sub: "you're chained together. good luck.", t: 0, life: 2.4 };
+      if (MODE[this.mode].chained && idx === 0) this.level.banner = { text: 'SURPRISE!', sub: "you're chained together. good luck.", t: 0, life: 2.4 };
     },
     restart() { this.level = new Level(this.idx, this.mode); this.clearInput(); },
     // too many deaths in one level: back one level, and that level's unlock is gone
@@ -768,7 +823,7 @@
       if (go) { sfx.click(); game.start(game.sel); }
       if (code === 'Escape') game.state = 'mode';
     } else if (game.state === 'play') {
-      if (code === 'KeyR' && !game.level.won) game.level.kill();
+      if (code === 'KeyR' && !game.level.won) { if (game.level.mode.players > 1) game.restart(); else game.level.kill(); }
       if (code === 'KeyN' && admin.unlock && !game.level.won && !game.level.over) game.level.win();
       if (code === 'Escape') {
         game.state = 'select';
@@ -1063,7 +1118,6 @@
     if (L.view.mirror) { ctx.translate(VW, 0); ctx.scale(-1, 1); }
     if (L.view.flip) { ctx.translate(0, VH); ctx.scale(1, -1); }
     drawBg();
-    for (const tx of L.texts) text(tx.str, tx.x * TILE, tx.y * TILE, 18, C.dim, 'left', 'normal');
     for (const f of L.flags) drawFlag(f, t);
     for (const d of L.doors) drawDoor(d, t);
     for (const s of L.spikes) drawSpike(s);
@@ -1074,6 +1128,11 @@
     for (const bt of L.buttons) drawButton(bt);
     for (const s of L.saws) if (!s.buried) drawSaw(s);
     for (const l of L.lasers) drawLaser(l, t);
+    // draw level text above blocks with a dark outline so gates/ceilings never cut it off
+    ctx.save(); ctx.font = `normal 18px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.strokeStyle = 'rgba(20,20,43,0.78)'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.fillStyle = 'rgba(232,230,240,0.52)';
+    for (const tx of L.texts) { ctx.strokeText(tx.str, tx.x * TILE, tx.y * TILE); ctx.fillText(tx.str, tx.x * TILE, tx.y * TILE); }
+    ctx.restore();
     if (L.chained) drawChain(L);
     for (const p of L.players) drawPlayer(p, L);
     for (const p of particles) {
@@ -1092,7 +1151,7 @@
     ctx.restore();
 
     // HUD
-    ctx.fillStyle = 'rgba(13,12,29,0.55)'; ctx.fillRect(0, 0, VW, 34);
+    ctx.fillStyle = 'rgba(13,12,29,0.82)'; ctx.fillRect(0, 0, VW, 34);
     text(`${String(L.idx + 1).padStart(2, '0')} / ${course(L.mode.id).length}  ${L.def.name.toUpperCase()}`, 14, 18, 15, C.text, 'left');
     const ld = save.levelDeaths[dkey(L.mode.id, L.idx)] || 0;
     text(`deaths here ${ld}   total ${save.deaths}`, VW - 14, 18, 15, C.danger, 'right');
@@ -1100,6 +1159,13 @@
       const sh = save.shame[L.mode.id];
       text(`${L.mode.label || L.mode.name}   strikes ${'✕'.repeat(game.strikes)}${'·'.repeat(Math.max(0, STRIKES - game.strikes))}`, VW / 2, 14, 12, C.portal);
       text(`shame: PINK ${sh[0]} · BLUE ${sh[1]}`, VW / 2, 28, 11, C.text, 'center', 'normal');
+    }
+    // persistent red/green light indicator with 0.45s yellow pre-change warning
+    if (L.light) {
+      const warn = L.lightEnds && L.lightEnds - L.t < 0.45;
+      const col = warn ? C.spike : L.light === 'green' ? C.flag : C.danger;
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(VW / 2 - 74, 52, 7, 0, Math.PI * 2); ctx.fill();
+      text(warn ? 'CHANGE!' : `${L.light.toUpperCase()} · ${L.light === L.go ? 'MOVE' : 'FREEZE'}`, VW / 2 + 12, 52, 15, col);
     }
 
     if (L.banner) {
@@ -1113,9 +1179,11 @@
       const m = game.message, a = clamp((1.6 - m.t) / 0.3, 0, 1);
       ctx.globalAlpha = a; text(m.text, VW / 2, 80, 26, C.danger); ctx.globalAlpha = 1;
     }
-    text(`${L.mode.hint} · R restart · ESC levels · M mute`, VW / 2, VH - 12, 12, 'rgba(20,20,43,0.55)', 'center', 'normal');
+    ctx.fillStyle = 'rgba(13,12,29,0.72)'; ctx.fillRect(0, VH - 22, VW, 22);
+    const hint = padCount ? 'Stick/D-pad move · A/X jump · Y/Select restart · Start levels' : `${L.mode.hint} · R restart · ESC levels · M mute`;
+    text(hint, VW / 2, VH - 11, 12, 'rgba(232,230,240,0.68)', 'center', 'normal');
     const tags = [admin.unlock && 'N skip', admin.god && 'GOD', admin.speed !== 1 && `${admin.speed}x`].filter(Boolean);
-    if (tags.length) text(`ADMIN: ${tags.join(' · ')}`, 14, VH - 12, 12, C.danger, 'left');
+    if (tags.length) text(`ADMIN: ${tags.join(' · ')}`, 14, VH - 11, 12, C.danger, 'left');
   }
 
   function drawTitle(t) {
@@ -1153,7 +1221,7 @@
     text('↑/↓ choose · ←/→ or ENTER change · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', 'normal');
   }
 
-  const SEL = { cols: 5, w: 120, h: 86, gapX: 24, gapY: 14, viewTop: 116, viewBottom: 426 };
+  const SEL = { cols: 5, w: 120, h: 86, gapX: 24, gapY: 14, viewTop: 116, viewBottom: 404 };
   function rowStep() { return SEL.h + SEL.gapY; }
   function maxSelectScroll() {
     const totalLevels = course(game.mode).length;
@@ -1295,9 +1363,9 @@
       text(`level ${lvl} / ${course(m.id).length}`, cx, r.y + 235, 13, C.danger, 'center', 'normal');
     });
     const m = MODES[game.modeSel];
-    text(m.hint, VW / 2, MCARD.top + MCARD.h + 45, 15, C.portal, 'center', 'normal');
-    if (m.players > 1 && matchMedia('(pointer: coarse)').matches) text('2-player modes need a keyboard', VW / 2, MCARD.top + MCARD.h + 72, 13, C.danger, 'center', 'normal');
-    text('←/→ choose · ENTER play · L pick level · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', 'normal');
+    text(padCount ? `Controller${padCount > 1 ? `s (${padCount})` : ''} connected · Stick/D-pad move · A jump` : m.hint, VW / 2, MCARD.top + MCARD.h + 45, 15, C.portal, 'center', 'normal');
+    if (m.players > 1 && matchMedia('(pointer: coarse)').matches && padCount < 2) text('2-player modes need a keyboard or 2 controllers', VW / 2, MCARD.top + MCARD.h + 72, 13, C.danger, 'center', 'normal');
+    text(padCount ? '←/→ choose · A play · Y pick level · B back' : '←/→ choose · ENTER play · L pick level · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', 'normal');
   }
 
   function drawEnd(t) {
@@ -1316,6 +1384,7 @@
   function frame(now) {
     let dt = Math.min(0.05, (now - last) / 1000);
     last = now; game.time += dt;
+    pollPads();
     if (game.state === 'play') {
       acc += dt * admin.speed;
       while (acc >= STEP) { game.level.step(STEP); acc -= STEP; }
@@ -1336,7 +1405,7 @@
 
   // deterministic hooks for automated tests (no effect on normal play)
   window.__ragebait = {
-    game, save, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed,
+    game, save, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed, pollPads,
     load(i, mode = 'single') { game.setMode(mode); game.start(i); },
     step(n = 1) { for (let i = 0; i < n; i++) game.level.step(STEP); },
     STEP,

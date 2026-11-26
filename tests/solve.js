@@ -228,13 +228,13 @@ const run = ([onlyCourse, onlyLevel]) => {
       k.right = 1;
       return J(st, 'a', L.px > 27.6 && L.player.grounded) ? 10 : false;
     },
-    // 17 The Betrayal: jump s1, jump onto hidden step (21,13.5), then (25,12) into real door
+    // 17 The Betrayal: jump s1, jump over the evil flag so bridge stays up, climb hidden steps to real door
     (L, k, st) => {
       const p = L.player;
       if (!st.step1) {
         k.right = L.px < 21.8;
         if (p.grounded && p.y < 13.5) st.step1 = 1;
-        return J(st, 'a', L.px > 3.6 && p.grounded) || J(st, 'b', L.px > 19.6 && p.grounded);
+        return J(st, 'a', L.px > 3.6 && p.grounded) || J(st, 'f', L.px > 14.2 && p.grounded) || J(st, 'b', L.px > 19.6 && p.grounded);
       }
       k.right = 1;
       return J(st, 'c', L.px > 22.2 && p.grounded && p.y < 13.5);
@@ -257,24 +257,24 @@ const run = ([onlyCourse, onlyLevel]) => {
       if (!st.ph) {
         if (L.invert) k.left = 1; else k.right = 1;
         if (L.px > 26.2) st.ph = 1;
-        return J(st, 'saw2', L.px > 23.0 && p.grounded);
+        return J(st, 'saw2', L.px > 23.0 && p.grounded) ? 16 : false;
       }
       if (st.ph === 1) {
-        if (L.px > 25.0 && p.y > 13.5) { k.left = 1; return false; }
-        k.right = L.px < 27.5;
+        if (L.px > 24.0 && p.y > 13.5) { k.left = 1; return false; }
+        k.right = L.px < 26.8;
         if (p.grounded && p.y < 13.5) st.ph = 2;
-        return J(st, 's1', p.grounded && L.px <= 25.1);
+        return J(st, 's1', p.grounded && L.px <= 24.1);
       }
       if (st.ph === 2) {
-        k.right = L.px < 29.2;
+        k.right = L.px < 29.0;
         if (p.grounded && p.y < 11.5) st.ph = 3;
-        return J(st, 's2', p.grounded && L.px > 27.2);
+        return J(st, 's2', p.grounded && L.px > 26.3);
       }
       if (st.ph === 3) {
-        if (L.px > 28.8 && p.grounded && p.y > 9.5) { k.left = 1; return false; }
+        if (L.px > 28.4 && p.grounded && p.y > 9.5) { k.left = 1; return false; }
         k.right = 1;
         if (p.grounded && p.y < 9.5) st.ph = 4;
-        return J(st, 's3', p.grounded && L.px <= 28.9);
+        return J(st, 's3', p.grounded && L.px <= 28.5);
       }
       if (L.px > 30.2) k.left = 1; else k.right = 1;
       return false;
@@ -357,7 +357,7 @@ const run = ([onlyCourse, onlyLevel]) => {
       { d: 1, prep: 5.3, ok: rlGo(1.0), at: 5.6, to: 9.6 },               // pit
       { d: 1, stop: 1, ok: rlGo(1.0), at: 10.6, to: 13.2 },               // spike
       { d: 1, stop: 1, ok: rlGo(1.0), at: 13.8, to: 16.6 },               // pit
-      { d: 1, stop: 1, ok: rlGo(1.4), at: (L) => L.saws[0].x - 2.0, to: 30 }, // over the frozen saw
+      { d: 1, stop: 1, ok: rlGo(1.4), at: (L) => L.saws[0].x - 2.0, to: 23.2 }, // over the frozen saw
       { d: 1, prep: 23.4, ok: rlGo(1.0), at: 23.8, to: 26 },              // step
       { d: 1, stop: 1, ok: rlGo(1.0), at: 26.5, to: 29.5 },               // platform
       { d: -1, prep: 29.2, ok: rlGo(1.0), at: 28.8, to: 25.5 },           // tier 2: the rules flip
@@ -548,10 +548,9 @@ const run = ([onlyCourse, onlyLevel]) => {
         if (gate.y <= -6 && P.x > 26.2 && P.g) P.jumpOnce('sp');
       }
     },
-    // 14 Gravity Split: gate opens when anyone passes x=14; both go right, jump hidden spike early
-    // Spike pops when leader passes x=24; fatal at x≈24.3 — must jump at x=23.5
+    // 14 Gravity Split: flip to ceiling together, rush past gate, flip back down, jump spike
     (L, A, B, st) => {
-      for (const P of [A, B]) { P.go(1); if (P.x > 23.5 && P.g) P.jumpOnce('sp'); }
+      for (const P of [A, B]) { P.go(1); if (L.g > 0 && P.x > 24.4 && P.g) P.jumpOnce('sp'); }
     },
     // 15 Detonator: A holds b1 -> B crosses g1 to b2 -> A crosses g1 to b2 -> B crosses g2 to b3 -> A crosses g2
     (L, A, B, st) => {
@@ -562,18 +561,18 @@ const run = ([onlyCourse, onlyLevel]) => {
       if (st.ph === 3) { B.to(25.7); if (g2.y < 1) A.go(1); else A.to(18.8); if (A.x > 24.5) st.ph = 4; return; }
       for (const P of [A, B]) { P.go(1); if (P.x > 27.6 && P.g) P.jumpOnce('sp', 10); }
     },
-    // 16 The See-Saw: jump onto platforms, hold both buttons to lift archGate, then jump into door
+    // 16 The See-Saw: jump onto platforms, hold both buttons to lift cage, then jump into door
     (L, A, B, st) => {
-      const gate = L.blocks[5];
+      const gate = L.blocks[4];
       if (!st.ph) {
-        A.go(1); if (A.x > 6.8 && A.g) A.jumpOnce('up');
-        B.go(-1); if (B.x < 25.2 && B.g) B.jumpOnce('up');
-        if (A.y < 13 && B.y < 13 && A.g && B.g) st.ph = 1;
+        if (A.x > 8.5 && A.g) A.to(10.7); else { A.go(1); if (A.x > 6.8 && A.g) A.jumpOnce('up'); }
+        if (B.x < 23.5 && B.g) B.to(21.3); else { B.go(-1); if (B.x < 25.2 && B.g) B.jumpOnce('up'); }
+        if (L.buttons[0].down && L.buttons[1].down && A.y < 13 && B.y < 13 && A.g && B.g) st.ph = 1;
         return;
       }
-      if (st.ph === 1) { A.to(10.7); B.to(20.7); if (gate.y < -8.5) st.ph = 2; return; }
-      A.to(16); if (A.x > 11.8 && A.g) A.jumpOnce('sp', 18);
-      B.to(16); if (B.x < 20.0 && B.g) B.jumpOnce('sp', 18);
+      if (st.ph === 1) { A.to(10.7); B.to(21.3); if (gate.y < 3.0) st.ph = 2; return; }
+      A.to(16); if (A.x > 11.6 && A.g) A.jumpOnce('sp');
+      B.to(16); if (B.x < 20.1 && B.g) B.jumpOnce('sp');
     },
     // 17 Mimic City: push crate2 onto btn2 first, boost B to push crate1 onto btn, jump sp into door
     (L, A, B, st) => {
@@ -746,7 +745,7 @@ const run = ([onlyCourse, onlyLevel]) => {
     },
     // 27 Ceiling Walk: flip up together, jump ceiling spike, hit pad down, hold b1->b2, jump spike
     (L, A, B, st) => {
-      const gate = L.blocks[3];
+      const gate = L.blocks[2];
       if (L.g < 0 && !st.flipped) st.flipped = 1;
       if (L.g > 0 && st.flipped) {
         if (!st.ph) { A.to(19.7); if (gate.y < 0) B.go(1); else B.to(21); if (L.buttons[1].latched) st.ph = 1; return; }
@@ -1171,35 +1170,22 @@ const run = ([onlyCourse, onlyLevel]) => {
         if (P.x > 22.8 && P.g) P.jumpOnce('s2');
       });
     },
-    // 18 The Chasm Swing: A anchors at ledge, B swings & chain-jumps across, then hauls A
+    // 18 The Chasm Swing: jump onto mid perch (11,12.2,3,1) together, then across chasm & over end spike
     (L, A, B, st) => {
-      if (!st.ph) {
-        A.to(7.5); B.go(1);
-        if (B.x > 7.5 && B.g) B.jumpOnce('j1');
-        if (B.x > 11.5 && B.p.hang > 0) { B.jumpOnce('j2'); st.ph = 1; }
-        return;
-      }
+      if (!st.ph) { A.to(5, 0.15); B.to(5, 0.15); if (near(A, 5, 0.2) && near(B, 5, 0.2) && A.g && B.g) st.ph = 1; return; }
       if (st.ph === 1) {
-        B.go(1);
-        if (B.x > 13.0) { if (A.x < 11.2) A.go(1); else A.go(0); if (A.x > 7.9 && A.g) A.jumpOnce('ja'); } else A.to(7.9);
-        if (!A.g && A.p.hang > 0 && !(L.t < st.cool)) { A.jump(); st.cool = L.t + 0.3; }
-        if (B.x > 16.5 && B.g) st.ph = 2;
-        return;
+        pair(A, B, (P) => { P.go(P.x < 12.5 ? 1 : 0); if (P.x > 7.5 && P.g && P.y > 13) P.jumpOnce('p1'); });
+        if (A.y < 12.2 && B.y < 12.2 && A.g && B.g) st.ph = 2; return;
       }
       if (st.ph === 2) {
-        B.to(22); A.go(1);
-        if (!A.g && A.p.hang > 0 && !(L.t < st.cool)) { A.jump(); st.cool = L.t + 0.3; }
-        if (A.x > 16.5 && A.g) st.ph = 3;
-        return;
+        pair(A, B, (P) => { P.go(1); if (P.x > 13.5 && P.g && P.y < 12.5) P.jumpOnce('p2'); });
+        if (A.x > 16.5 && B.x > 16.5 && A.g && B.g) st.ph = 3; return;
       }
       if (st.ph === 3) {
-        A.to(24.0, 0.1); B.to(24.0, 0.1);
-        if (near(A, 24.0, 0.2) && near(B, 24.0, 0.2) && A.g && B.g) st.ph = 4;
-        return;
+        A.to(23.5, 0.15); B.to(23.5, 0.15);
+        if (near(A, 23.5, 0.25) && near(B, 23.5, 0.25) && A.g && B.g) st.ph = 4; return;
       }
-      B.go(1); A.go(1);
-      if (B.x > 25.1 && B.g) B.jumpOnce('sp');
-      if (A.x > 25.1 && A.g) A.jumpOnce('sp');
+      pair(A, B, (P) => { P.go(1); if (P.x > 25.1 && P.g) P.jumpOnce('sp'); });
     },
     // 19 Chaos Bond: align, jump early for 0.16s lag (~1.3 tiles)
     (L, A, B, st) => {
@@ -1607,6 +1593,36 @@ const run = ([onlyCourse, onlyLevel]) => {
         }
       } catch (e) { bad.push(`${tag}: threw ${e.message}`); }
     });
+  }
+  // ---- gamepad support check: deadzone, 1P/2P movement+jump, menus, and clean disconnect
+  if (!onlyCourse && !onlyLevel) {
+    const origNav = Object.getOwnPropertyDescriptor(window, 'navigator');
+    let fakePads = [];
+    const mkPad = (btns = [], axes = [0, 0]) => ({ buttons: Array.from({ length: 16 }, (_, j) => ({ pressed: btns.includes(j), value: btns.includes(j) ? 1 : 0 })), axes });
+    const setPads = (arr) => { fakePads = arr; R.pollPads(); };
+    try {
+      const nav = typeof navigator !== 'undefined' ? navigator : {};
+      const origGet = nav.getGamepads;
+      Object.defineProperty(nav, 'getGamepads', { configurable: true, value: () => fakePads });
+      if (typeof navigator === 'undefined') window.navigator = nav;
+      R.load(0, 'single');
+      setPads([mkPad([], [0.2, 0])]);                                    // inside deadzone
+      chk('gamepad', !R.ctl[0].left && !R.ctl[0].right, 'deadzone failed');
+      setPads([mkPad([0], [0.8, 0])]);                                   // P1 right + jump
+      chk('gamepad', R.ctl[0].right && R.ctl[0].jump && R.pressedAll[0].has('jump'), '1P stick/jump failed');
+      R.load(0, 'multi');
+      setPads([mkPad([], [-0.8, 0]), mkPad([0], [0.8, 0])]);             // P1 left, P2 right + jump
+      chk('gamepad', R.ctl[0].left && R.ctl[1].right && R.ctl[1].jump && R.pressedAll[1].has('jump'), '2P dual controllers failed');
+      setPads([mkPad([9])]);                                             // Start -> level select
+      chk('gamepad', R.game.state === 'select', 'Start pause/select failed');
+      setPads([mkPad([1])]);                                             // B -> mode select
+      chk('gamepad', R.game.state === 'mode', 'B back failed');
+      setPads([]);                                                       // disconnect clears held inputs
+      chk('gamepad', !R.ctl[0].left && !R.ctl[0].right && !R.ctl[1].right && !R.ctl[1].jump, 'disconnect cleanup failed');
+      if (origGet) Object.defineProperty(nav, 'getGamepads', { configurable: true, value: origGet });
+      else delete nav.getGamepads;
+    } catch (e) { bad.push(`gamepad: threw ${e.message}`); }
+    if (origNav) Object.defineProperty(window, 'navigator', origNav);
   }
   const s0 = JSON.parse(snap); R.save.deaths = s0[0]; R.save.levelDeaths = s0[1]; R.save.shame = s0[2];   // kill() above counted deaths
   out.push(bad.length ? bad.map((b) => `[edge] ${b}`).join('\n') : `[edge] ${n} levels load, spawn safe, idle, restart, fake doors: won`);

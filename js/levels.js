@@ -111,89 +111,6 @@ function bonus(L) {
   go(0);
 }
 
-// The Undoing, room B: lights out over a two-floor maze while a laser rises from below.
-function undoingB(L) {
-  L.blocks = []; L.spikes = []; L.saws = []; L.doors = []; L.texts = []; L.lasers = []; L.ladders = [];
-  L.triggers.length = 0; L.jumpHooks.length = 0; L.timers.length = 0;
-  L.room = 'B'; L.light = null; L.banner = { text: "DON'T BLINK", sub: '', t: 0, life: 1.4 };
-  const p = L.player;
-  p.x = 1.1; p.y = 0.2; p.vx = 0; p.vy = 0;
-  const start = { x: 1.1, y: 15 - p.h };
-  L.block(0, -1, 3.8, 1); L.block(5.6, -1, 26.4, 1);      // ceiling, with the exit above the last ladder
-  L.block(0, 15, 32, 3);                                 // floor 0
-  for (const [a, b] of [[0, 0.5], [2.5, 12], [13.5, 29], [30.5, 32]]) L.block(a, 10, b - a, 1);  // floor 1
-  // floor 0, heading right: a spike ceiling to tap under, a 5x zone through a laser, a teleport tile
-  L.spike(7, 11, 5, 'down');
-  L.spike(10, 15, 1, 'up');
-  L.laser(17.85, 11, 0.3, 4, { on: 0.8, off: 0.8 });
-  L.speedMul = 1;
-  const fast = () => L.py > 11 && L.px > 14 && L.px < 22;
-  L.on(() => fast() !== (L.speedMul > 1), () => {
-    L.speedMul = fast() ? 5 : 1;
-    L.player.vx = Math.max(-8, Math.min(8, L.player.vx));
-  }, { repeat: true });
-  L.ladder(29.3, 9.5, 1, 5.5);
-  // floor 1, heading left: a teleport tile, a hole back down, then the ladder out through the ceiling
-  L.ladder(4.2, -1.5, 1, 11.5);
-  L.block(3, 0, 0.6, 10);                               // wall: no falling in straight onto the exit ladder
-  for (const [x, y] of [[24.5, 15], [20, 10]]) {
-    L.text(x + 0.12, y - 0.35, '✕');
-    L.on(() => L.player.grounded && Math.abs(L.player.y + L.player.h - y) < 0.05 && L.player.x < x + 1 && L.player.x + L.player.w > x, () => {
-      p.x = start.x; p.y = start.y; p.vx = 0; p.vy = 0; L.speedMul = 1; L.say('back to start!'); L.shake(0.2, 0.2);
-    }, { repeat: true });
-  }
-  const t0 = L.t, lava = L.laser(0, 18.5, 32, 0.3, { on: 1e9, off: 1 });
-  L.on(() => true, () => { lava.y = 18.5 - Math.max(0, L.t - t0 - 1.5) * 0.55; }, { repeat: true });
-  L.wait(1.5, () => lightsOut(L, 1.6));
-  L.on(() => L.py < 0.3, () => undoingC(L));
-}
-
-// The Undoing, room C: the real portal is the one the sign tells you to jump to, right at the start.
-// the ride after it (dodging saw, laser, drop, crumbling platform, inverted last jump) leads to a fake.
-function undoingC(L) {
-  L.blocks = []; L.spikes = []; L.saws = []; L.doors = []; L.texts = []; L.lasers = []; L.ladders = [];
-  L.triggers.length = 0; L.jumpHooks.length = 0; L.timers.length = 0;
-  L.room = 'C'; L.dark = 0; L.speedMul = 1; L.invert = false;
-  L.banner = { text: 'LAST ROOM', sub: '', t: 0, life: 1.8 };
-  L.spike(0, 18, 32, 'up');
-  const P = L.block(1, 17.5, 2.5, 0.5, { fall: 2.5 });
-  const p = L.player;
-  p.x = P.x + 0.85; p.y = P.y - p.h; p.vx = 0; p.vy = 0;
-  // the portal right by the start is the real one; the whole ride after it is the decoy
-  L.block(4.5, 6.5, 3, 0.5);
-  L.saw(5.05, 6.5, 0.6, { buried: true });               // guards the left of the real portal: clear it, land right of it
-  L.door(5.5, 6.5);
-  const s1 = L.saw(8, 8.55, 0.7);
-  L.on(() => P.x + 2.5 > s1.x - 1.5, () => { s1.vy = -14; });
-  L.on(() => s1.y <= 5, () => { s1.vy = 0; });
-  L.saw(12, 7.33, 0.7);
-  const beam = L.laser(14.6, 0, 0.3, 8.6, { on: 1e9, off: 1 });
-  L.on(() => P.x > 11.7, () => { L.lasers.splice(L.lasers.indexOf(beam), 1); L.say('zzt'); });
-  L.block(22.5, 12, 9.5, 1);
-  L.spike(25, 12, 1.5, 'up');
-  const decoy = L.door(29.5, 12, { fake: true });
-  const decoyTrap = L.spike(27, 12, 5, 'up', { hidden: true });
-  L.on(() => L.touch(decoy), () => { decoyTrap.pop(); L.banner = { text: 'FAKE', sub: '', t: 0, life: 1.4 }; });
-  // the inversion: on even death counts it hits when you jump, on odd ones as you walk up
-  const early = L.deaths % 2 === 1;
-  const flip = () => { L.invert = true; };
-  if (early) L.on(() => L.py < 12 && L.px > 23.5, flip);
-  else L.onJump(() => { if (L.py < 12 && L.px > 22.5) flip(); });
-  const path = [
-    [1, 9, 5, 0.3],
-    [16, 9, 4, 0, () => L.say('uh oh')],
-    [16, 12, 14, 0.4],
-    [20, 12, 4, 0, () => { L.say('creak...'); L.drop(P, 0.3); }],
-  ];
-  const go = (i) => {
-    if (i >= path.length) return;
-    const [x, y, speed, pause, fn] = path[i];
-    L.moveBlock(P, x, y, speed);
-    L.on(() => P.x === x && P.y === y, () => { if (fn) fn(); L.wait(pause, () => go(i + 1)); });
-  };
-  go(0);
-}
-
 // hidden spike row that pops once cond() holds
 function trap(L, x, y, w, cond, dir = 'up') { const s = L.spike(x, y, w, dir, { hidden: true }); L.on(cond, () => s.pop()); return s; }
 
@@ -377,22 +294,9 @@ const SINGLE = [
     },
   },
   {
-    name: 'The End',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(3, 6, 'Final level. You made it!');
-      L.block(0, 15, 22, 3);
-      const trap = L.block(22, 15, 10, 3);
-      L.block(17, 6, 8, 1);
-      L.door(21.5, 6);
-      L.block(9, 12, 2, 1, { hidden: true });
-      L.block(13, 9, 2, 1, { hidden: true });
-      const fake = L.door(28, 15, { fake: true });
-      L.on(() => L.touch(fake), () => {
-        L.fakeWin();
-        L.wait(1.1, () => { L.drop(trap, 0); L.banner = { text: 'JK', sub: 'that one was fake', t: 0 }; });
-      });
-    },
+    // Boss 1, the Upper Halls: js/bosses.js
+    name: 'The Warden',
+    build(L) { BOSSES.warden.build(L); },
   },
   // ---------------------------------------------------------------- levels 11-20 (single-player, harder)
   {
@@ -625,47 +529,9 @@ const SINGLE = [
     },
   },
   {
-    name: 'The Reckoning',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(3, 5, 'Everything. All at once. Final level.');
-      L.block(0, 15, 6, 3);
-      // gravity flip zone
-      L.block(0, 0, 6, 3);
-      L.pad(4, 15, 2, -1);
-      L.block(6, 0, 4, 3);
-      L.pad(8, 3, 2, 1);
-      // solid landing + crumble section
-      L.block(9, 15, 4, 3);
-      for (let x = 13; x < 18; x++) L.block(x, 15, 1, 1, { crumble: 0.22 });
-      L.block(18, 15, 4, 3);
-      // inverted controls hit on landing before the crumble stretch, cleared on solid ground after
-      L.on(() => L.px > 10.5, () => { L.invert = true; L.say('and inverted'); });
-      L.on(() => L.px > 18.4, () => { L.invert = false; L.say('you\'re welcome'); });
-      // crusher: narrower, telegraphed, single trigger, sits over the island
-      const crush = L.block(19, 0, 3, 7);
-      let slamAt = -1, slamUntil = -1;
-      L.on(() => L.px > 17.5, () => { slamAt = L.t + 0.7; slamUntil = slamAt + 0.6; });
-      L.gate(crush, 0, 8, () => L.t >= slamAt && L.t < slamUntil, { speed: 30, closeSpeed: 6 });
-      // lag for the final stretch
-      L.block(22, 15, 10, 3);
-      L.on(() => L.px > 22, () => { L.jumpDelay = 0.2; L.say('lag!'); });
-      // dual saws (saw sandwich)
-      const saw1 = L.saw(-2, 14.2, 0.75);
-      const saw2 = L.saw(34, 14.2, 0.75);
-      L.on(() => L.px > 8, () => { saw1.vx = 7; });
-      L.on(() => L.px > 20, () => { saw2.vx = -7; });
-      // single door that runs away to an elevated platform
-      const portal = L.door(28, 15);
-      L.block(25, 13, 2.5, 1, { hidden: true });
-      L.block(28, 11, 2.5, 1, { hidden: true });
-      L.block(29, 9.5, 3, 1);
-      L.on(() => L.near(portal, 2.2), () => {
-        L.moveDoor(portal, 29.5, 9.5, 14);
-        L.say('not so fast');
-      });
-      L.on(() => L.px > 26, () => { L.jumpDelay = 0; });
-    },
+    // Boss 2, the Crypt: js/bosses.js
+    name: 'The Undertaker',
+    build(L) { BOSSES.undertaker.build(L); },
   },
   // ---------------------------------------------------------------- levels 21-30 (single-player, mind games)
   {
@@ -1122,42 +988,9 @@ const SINGLE = [
     },
   },
   {
-    // the finale, three rooms, every trick from 21-29. room A: red light/green light over fake-spike
-    // footholds; the way on is the pit. room B: lights out with a rising laser, a spike ceiling,
-    // a 5x speed zone, teleport tiles and ladders. room C: jump for the portal by the start; the long
-    // ride past it ends at a fake, behind a jump that inverts your controls (when depends on deaths).
-    name: 'The Undoing',
-    build(L) {
-      L.spawn(2, 15);
-      L.room = 'A';
-      L.text(3, 2.6, 'This is where it ends.');
-      L.spike(0, 18, 32, 'up');
-      const gap = (x, floorY, w = 1) => {
-        const g = L.spike(x + 0.2, floorY, w - 0.4, 'up', { hidden: true });
-        L.on(() => !L.player.grounded && L.py < floorY && L.py > floorY - 4 && L.px > x - 0.3 && L.px < x + w + 0.3, () => g.pop());
-      };
-      L.block(0, 15, 5, 1);
-      L.block(7, 15, 11, 1);
-      gap(7, 15, 2);
-      L.spike(9, 15, 2, 'up', { fake: true });
-      gap(11, 15, 1.2);
-      L.spike(12.2, 15, 1, 'up');
-      gap(13.2, 15);
-      L.spike(14.2, 15, 2, 'up', { fake: true });
-      gap(16.2, 15);
-      L.spike(17.2, 15, 0.8, 'up');
-      L.block(20, 15, 6, 1);
-      L.block(28.5, 15, 3.5, 3);
-      L.block(26, 15.5, 2.5, 1.5, { hidden: true, solid: false });  // shimmer hint: the pit is the way on
-      // the obvious way on is a fake
-      L.block(28.5, 12.5, 3.5, 0.5);
-      const decoy = L.door(29.8, 12.5, { fake: true });
-      const decoyTrap = L.spike(28.5, 12.5, 3.5, 'up', { hidden: true });
-      L.on(() => L.touch(decoy), () => { decoyTrap.pop(); L.banner = { text: 'FAKE', sub: '', t: 0, life: 1.4 }; });
-      // red light, green light (each light lasts 1.3-2 s)
-      redGreen(L, [1.8, 1.5, 2.0, 1.6], [1.4, 1.6, 1.3, 1.5]);
-      L.on(() => L.py > 16 && L.px > 26 && L.px < 28.5, () => undoingB(L));
-    },
+    // Boss 3, the Flooded Depths: js/bosses.js
+    name: 'Old Gnasher',
+    build(L) { BOSSES.gnasher.build(L); },
   },
   // ---------------------------------------------------------------- levels 31-40 (single-player, finals)
   {
@@ -1336,36 +1169,9 @@ const SINGLE = [
     },
   },
   {
-    // the exam: a 2.5x sprint through a beam, gravity pads over a spiked roof, inverted crumbling stones,
-    // and a portal on the floor that is fake. the real one hangs from the ceiling.
-    name: 'Final Exam',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(2, 2.6, 'Final exam. No notes.');
-      L.speedMul = 2.5;
-      L.spike(0, 18, 32, 'up');
-      L.block(0, 15, 10, 3);
-      L.laser(4.5, 10, 0.3, 5, { on: 0.7, off: 0.9 });
-      L.on(() => L.px > 7.2, () => { L.speedMul = 1; L.player.vx = Math.min(L.player.vx, 8); });
-      L.pad(8, 15, 1.8, -1);
-      L.block(8, 0, 11, 3);
-      L.spike(13, 3, 1, 'down');
-      L.pad(16, 3, 1.8, 1);
-      L.block(17, 15, 3, 3);
-      for (let x = 20; x < 23; x++) L.block(x, 15, 1, 1, { crumble: 0.18 });
-      const end = L.block(23, 15, 9, 3);
-      L.on(() => L.px > 19, () => { L.invert = true; L.say('inverted!'); });
-      L.on(() => L.px > 23.5, () => { L.invert = false; });
-      L.pad(26, 15, 1.8, -1);
-      L.block(24, 0, 8, 3);
-      L.door(29.5, 4.6);
-      const fake = L.door(29.5, 15, { fake: true });
-      trap(L, 28, 15, 1.2, () => L.px > 27);
-      L.on(() => L.touch(fake), () => {
-        L.fakeWin();
-        L.wait(1.1, () => { L.drop(end, 0); L.banner = { text: 'JK', sub: 'look up', t: 0, life: 1.8 }; });
-      });
-    },
+    // Boss 4, the Molten Core: js/bosses.js
+    name: 'The Mimic',
+    build(L) { BOSSES.mimicBoss.build(L); },
   },
 ];
 

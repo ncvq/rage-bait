@@ -52,7 +52,9 @@ Each mode has its own 10-level course and keeps its own progress.
 | 7 | Safe Spot | crumbling floor and a fake checkpoint |
 | 8 | Behind You | saw blade chase and a last-second pit |
 | 9 | Input Lag | jumps are delayed... until they aren't |
-| 10 | The End | fake portal, fake "level complete", invisible blocks |
+| 10 | The Warden | boss: make the armour charge into the wall, then strike |
+
+Every tenth single-player level is a boss, and they are meant to be extremely hard: The Warden (10), The Undertaker (20), Old Gnasher (30) and The Mimic (40). Each has its own intro and defeat cutscene, its own music, and moves differently on every attempt. You can't attack: dodge one of its attacks so it hurts itself, then touch the stunned boss and hit the STRIKE keys in time. Grabs mean mashing jump to break free. Six hits in three phases, and dying keeps the phase you reached.
 
 **Multiplayer**: co-op puzzles with stacked trolls, harder than single player. Both players must enter the portal.
 

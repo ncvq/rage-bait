@@ -37,6 +37,75 @@ const run = ([onlyCourse, onlyLevel]) => {
     }
     return false;
   };
+  // ---- boss bot helpers (tools: the scratch tracer evals this block too)
+  // answer a quick-time event: one key every other step (a key needs a release in between to count again)
+  const qteBot = (L, k, st) => {
+    const q = L.qte;
+    if (!q) { st.qk = 0; return null; }
+    st.qk = (st.qk || 0) + 1;
+    if (st.qk % 2) return false;
+    const key = q.mash ? 'jump' : q.keys[q.i];
+    if (key === 'jump') return 2;
+    k[key] = 1; return false;
+  };
+  const goX = (L, k, x, tol = 0.15) => { if (Math.abs(L.px - x) > tol) { if (x > L.px) k.right = 1; else k.left = 1; } };
+  // simulate a full jump from where we stand and an orb rolling at us (it steers toward x0 at a, up to vmax):
+  // 'stomp' if we come down on top of it, 'hit' if it gets us, null if they never meet in time
+  const orbJump = (px, orb, a, vmax, jump = true) => {
+    let ox = orb.x, ovx = orb.vx;
+    for (let i = 1; i <= 100; i++) {
+      const tau = i / 120;
+      ovx = Math.max(-vmax, Math.min(vmax, ovx + Math.sign(px - ox) * a / 120)); ox += ovx / 120;
+      const hgt = jump ? Math.max(0, 20.5 * tau - 31 * tau * tau) : 0, feet = 15 - hgt;
+      const cx = Math.max(px - 0.4, Math.min(px + 0.4, ox)), cy = Math.max(feet - 0.9, Math.min(feet, orb.y));
+      if (Math.hypot(ox - cx, orb.y - cy) < orb.r * 0.85) return jump && tau > 0.34 && feet < orb.y - 0.2 ? 'stomp' : 'hit';
+      if (jump && tau > 0.66) return null;
+    }
+    return null;
+  };
+  // Simulate the knight for T seconds running in direction dir (-1, 0, 1), jumping now or not, against
+  // projectiles (circles: x, y, r, vx, vy, g gravity, bounceY / bounceVy, spawn = seconds from now) and timed
+  // rects (x, y, w, h live from t0 to t1). True if nothing touches it. floor = the y the knight stands on.
+  const planSafe = (p, dir, jump, projs, rects, T = 0.8, floor = 15, hop = false, to = null, out = null, jumpAt = 0) => {
+    const now = jump && !jumpAt;   // jumpAt: run first (turning is quicker on the ground), jump that many seconds from now
+    let x = p.x, vx = p.vx, y = p.y, vy = now ? -20.5 : p.grounded ? 0 : p.vy, grounded = p.grounded && !now, stomped = false, jumped = now;
+    const qs = projs.map((q) => ({ ...q }));
+    for (let i = 1; i <= T * 120; i++) {
+      if (to !== null) dir = Math.abs(to - (x + 0.4)) < 0.15 ? 0 : Math.sign(to - (x + 0.4));   // run to a spot and stop
+      const dt = 1 / 120, t = i * dt, want = dir * 8, acc = (grounded ? (dir ? 90 : 80) : 60) * dt;
+      vx = vx < want ? Math.min(want, vx + acc) : Math.max(want, vx - acc);
+      x = Math.max(p.minX === undefined ? 1 : p.minX, Math.min((p.maxX === undefined ? 31 : p.maxX) - 0.8, x + (vx + (p.wind || 0)) * dt));   // a current pushes too
+      if (grounded && ((hop && jumped) || (jumpAt && !jumped && i / 120 >= jumpAt))) { vy = -20.5; grounded = false; jumped = true; }   // hop again / jump later
+      if (!grounded) { vy = Math.min(vy + 62 * dt, 28); y += vy * dt; if (y >= floor - 0.9) { y = floor - 0.9; vy = 0; grounded = true; } }
+      if (grounded && p.pits && p.pits.some(([a, z]) => x > a - 0.05 && x + 0.8 < z + 0.05)) return false;   // fell in a pit
+      for (const q of qs) {
+        if (t < (q.spawn || 0) || q.done || (q.life !== undefined && t > q.life + (q.spawn || 0))) continue;
+        if (q.homing) q.vx = Math.max(-q.homing.vmax, Math.min(q.homing.vmax, q.vx + Math.sign(x + 0.4 - q.x) * q.homing.a * dt));
+        q.vy = (q.vy || 0) + (q.g || 0) * dt; q.x += q.vx * dt; q.y += q.vy * dt;
+        if (q.bounceY !== undefined && q.y > q.bounceY) { q.y = q.bounceY; q.vy = q.bounceVy; }
+        const cx = Math.max(x, Math.min(x + 0.8, q.x)), cy = Math.max(y, Math.min(y + 0.9, q.y));
+        if (Math.hypot(q.x - cx, q.y - cy) < q.r * 0.85) {
+          if (q.stomp && vy > 0 && y + 0.9 < q.y - 0.12) { q.done = true; stomped = true; vy = -14; continue; }   // landed on it
+          return false;
+        }
+      }
+      for (const r of rects) {
+        if (t < r.t0 || t > r.t1) continue;
+        const rx = r.x + (r.vx || 0) * t, ry = r.y + (r.vy || 0) * t + 0.5 * (r.g || 0) * t * t;   // moving rects (a dash, a leap)
+        if (x < rx + r.w && x + 0.8 > rx && y < ry + r.h && y + 0.9 > ry) return false;
+      }
+    }
+    if (out) out.x = x + 0.4;
+    return stomped ? 'stomp' : true;
+  };
+  // planSafe with gravity up: mirror y about the middle of the room (3..15), plan, done
+  const planSafeG = (p, dir, jump, projs, rects, up) => {
+    if (!up) return planSafe(p, dir, jump, projs, rects, 0.8, 15);
+    const m = (y) => 18 - y;
+    const pm = { x: p.x, y: m(p.y + p.h), vx: p.vx, vy: -p.vy, grounded: p.grounded };
+    return planSafe(pm, dir, jump, projs.map((q) => ({ ...q, y: m(q.y), vy: -(q.vy || 0) })), rects.map((r) => ({ ...r, y: m(r.y + r.h) })), 0.8, 15);
+  };
+  // ---- end boss bot helpers
   const crusherSafe = (L, o) => { const ph = (L.t + o) % 1.8; return ph > 1.18 && ph < 1.28; };
   // Red Light: your colour is up, with at least `min` seconds left on it
   const rlGo = (min) => (L) => L.light === L.go && L.lightEnds - L.t > min;
@@ -53,28 +122,7 @@ const run = ([onlyCourse, onlyLevel]) => {
     { d: 1, at: 19.7, to: 25.0 },                                         // floor spike at 22
     { d: 1, at: 30.8, walk: 1 },                                          // the low portal is real
   ]);
-  // The Undoing, room by room. room B's laser in the 5x zone is off for (t % 1.6) in [0.8, 1.6)
-  const undoing = {
-    A: hopper([
-      { d: 1, prep: 4.5, ok: rlGo(1.0), at: 4.8, to: 10.0 },             // onto the first fake strip
-      { d: 1, stop: 1, ok: rlGo(1.0), at: 10.5, to: 14.6 },              // second fake strip
-      { d: 1, stop: 1, ok: rlGo(1.0), at: 15.5, to: 21 },                // island
-      { d: 1, prep: 25.2, ok: rlGo(1.0), at: 27, walk: 1 },              // walk off into the pit
-    ], { pause: (L) => L.light !== L.go }),
-    B: hopper([
-      { d: 1, stop: 1, ok: (L) => L.py > 14, at: 0, walk: 1 },           // fall all the way in to floor 0 first
-      { d: 1, at: 9.0, to: 13, hold: 4 },                                // tap under the spike ceiling
-      { d: 1, prep: 13.4, ok: (L) => { const c = L.t % 1.6; return c > 0.8 && c < 1.15; }, at: 23.0, walk: 1 }, // 5x through the laser
-      { d: 1, at: 23.4, to: 27.5 },                                      // teleport tile
-      { d: -1, prep: 29.8, at: 29.8, hold: 130, upTo: 9.2, to: 27 },     // ladder up to floor 1
-      { d: -1, at: 22.3, to: 18.8 },                                     // teleport tile
-      { d: -1, at: 14.3, to: 10.8 },                                     // hole
-      { d: -1, prep: 4.7, at: 4.7, hold: 260 },                          // ladder out through the ceiling
-    ]),
-    C: hopper([
-      { d: 1, prep: 1.5, ok: (L) => L.blocks[0].y <= 9.001, at: 2.3, to: 6.4 }, // top of the rise: running jump over the saw into the near portal
-    ]),
-  };
+
   // seconds left in a laser's off window (-1 while it is on)
   const off = (l, L) => { const c = (L.t + l.phase) % (l.on + l.off); return c < l.on ? -1 : l.on + l.off - c; };
   // run a hop list, then hand over to tail(L, k, st) once all n hops are done
@@ -166,17 +214,71 @@ const run = ([onlyCourse, onlyLevel]) => {
     (L, k, st) => { k.right = 1; return J(st, 'a', L.px > 8.4) || J(st, 'b', L.px > 17.4) || J(st, 'c', L.px > 24.3); },
     // 9 lag: press 0.22s (~1.76 tiles) early
     (L, k, st) => { if (L.px > 31) st.back = 1; k.right = !st.back; k.left = !!st.back; return J(st, 'a', L.px > 5.2) || J(st, 'b', L.px > 12.1 && L.player.grounded) || J(st, 'c', L.px > 18.0 && L.player.grounded) || J(st, 'd', L.px > 25.5 && L.player.grounded); },
-    // 10: bump hidden blocks then climb
+    // 10 The Warden: hold a spot 5-7 tiles out from the wall on your side of it, so a charge you jump ends in
+    // the wall right behind you. Jump its stomp ripples, sweeps and the outgoing halberd at the last moment (stay
+    // down when it comes back), jump over charges from a standstill, jump over it when it walks you into the
+    // corner, run from the leap's landing spot, walk out from under falling masonry. Dazed: walk into it, strike
     (L, k, st) => {
-      const p = L.player;
-      if (!st.s) { k.right = 1; if (L.px > 9.6) { k.right = 0; st.s = 1; } return false; }
-      if (st.s === 1) { k.right = 0; if (Math.abs(p.vx) < 0.1 && p.grounded) { st.s = 2; return true; } return false; }
-      if (st.s === 2) { if (!L.blocks[3].hidden && p.grounded) { st.s = 3; } return false; }
-      if (st.s === 3) { k.left = 1; if (L.px < 6) { k.left = 0; st.s = 4; } return false; }
-      if (st.s === 4) { k.right = L.px < 9.6; if (p.grounded && p.y < 12) st.s = 5; return J(st, 'a', L.px > 6.5 && p.grounded); }
-      if (st.s === 5) { k.right = L.px < 13.6; if (p.grounded && p.y < 9) st.s = 6; return J(st, 'b', p.grounded && L.px > 10.2); }
-      if (st.s === 6) { k.right = 1; return J(st, 'c', p.grounded && L.px > 14.2); }
-      return false;
+      const q = qteBot(L, k, st); if (q !== null) return q;
+      const b = L.bosses[0];
+      if (L.cine || !b || b.dead || b.state === 'dying') return false;
+      const p = L.player, g = p.grounded, px = L.px, wc = b.x + b.w / 2, d = px - wc, ad = Math.abs(d), s = b.state;
+      const low = p.y + p.h > 14.4, ahead = d * b.face > 0;
+      let jump = false;
+      // ripples: remember when a stomp or a landing goes off, then jump just before the spike under us pops
+      if (s === 'stompTell') st.rip = { at: L.t + b.tellFor - b.st, cx: wc, r: [0, 8, 9, 10][b.phase] };
+      if (s === 'leap') st.rip = { at: L.t + 0.85 - b.st, cx: b.leapTo + b.w / 2, r: 3.5 };
+      if (st.rip && low) {
+        let pop = Infinity;
+        for (let x = Math.floor(p.x); x <= Math.floor(p.x + p.w); x++) {
+          const dd = Math.abs(x + 0.5 - st.rip.cx);
+          if (dd >= b.w / 2 + 0.2 && dd <= st.rip.r && x + 0.12 < p.x + p.w && x + 0.88 > p.x) pop = Math.min(pop, st.rip.at + dd * 0.03);
+        }
+        if (L.t > pop - 0.06 && L.t < pop + 0.3) jump = true;
+        if (L.t > st.rip.at + 0.7) st.rip = null;
+      }
+      const gap = b.face > 0 ? p.x - (b.x + b.w) : b.x - (p.x + p.w);
+      if (s === 'sweepTell' && low && ahead && gap < 3.5 && b.tellFor - b.st < 0.07) jump = true;
+      // a charge: from a standstill, jump when its body will pass under the top of the jump
+      // jump so that its body starts passing under us 0.33 - 1.5/v s into the jump (it is 2.6 tall: the top of the jump)
+      if ((s === 'charge' || s === 'chargeTell') && low && ahead) {
+        const v = [0, 13, 15, 17][b.phase], until = (s === 'chargeTell' ? b.tellFor - b.st : 0) + gap / v;
+        if (until <= 0.33 - 1.5 / v + 0.004) jump = true;
+      }
+      if (s === 'grabTell' && ahead && gap < 1.7) jump = true;
+      // cornered by a walking Warden: run at it and jump over (only works while it walks at you)
+      const room = d > 0 ? 27.2 - px : px - 4.8, corner = s === 'walk' && b.walkDir * d < 0 && low && room < 2.8 && gap < 4;
+      if (corner && gap < (5.4 + 8) * 0.22) jump = true;
+      const hal = L.hz.find((h) => h.atk === 'throw');
+      if (hal && low) {
+        const toward = (px - hal.x) * hal.vx > 0;
+        if (hal.out && toward && Math.abs(hal.x - px) - 0.95 < 13 * 0.11) jump = true;
+        if (!hal.out && Math.abs(hal.x - px) < 4) jump = false;   // it comes back at head height: stay down
+      }
+      // where to go. Never under a ledge (a jump there hits its head) unless striking
+      const under = (x) => x - 0.4 < 4.4 || x + 0.4 > 27.6;
+      const deb = L.hz.find((h) => h.atk === 'debris' && h.x < p.x + p.w + 0.5 && h.x + h.w > p.x - 0.5 && h.y < 12);
+      const side = px < wc ? -1 : 1, home = side < 0 ? 6.2 : 25.8;
+      if (s === 'dazed' && b.stun > Math.max(0, ad - 1.5) / 8 + 0.15) goX(L, k, wc, 0.3);   // only if we get there in time
+      else if (corner) goX(L, k, wc);
+      else if (s === 'leap') {
+        const lc = b.leapTo + b.w / 2, from = b.leapX0 + b.w / 2;
+        let dir = Math.sign(px - from) || 1;
+        const bad = (x) => x < 4.8 || x > 27.2 || L.hz.some((h) => h.atk === 'debris' && Math.abs(h.x + h.w / 2 - x) < 1.6);
+        if (bad(lc + dir * 5.2)) dir = -dir;
+        goX(L, k, Math.min(27.2, Math.max(4.8, lc + dir * 5.2)));
+      } else if ((s === 'charge' || (s === 'chargeTell' && !g)) && ahead) { /* hold still, on the ground and in the air: the jump is timed for that */ }
+      else if (deb) {   // out from under it, on the side away from the Warden
+        const l = deb.x - 1.4, r = deb.x + deb.w + 1, ok = (x) => x > 4.8 && x < 27.2;
+        goX(L, k, !ok(l) ? r : !ok(r) ? l : Math.abs(l - wc) > Math.abs(r - wc) ? l : r);
+      }
+      else if (s === 'grabTell' && ahead && gap < 1.7) goX(L, k, Math.min(27.2, Math.max(4.8, px + b.face * 3)));
+      else if (low && under(px) && s !== 'charge') goX(L, k, side < 0 ? 5 : 27);
+      else if (!['chargeTell', 'stompTell', 'sweepTell'].includes(s)) {
+        if (ad < 4.5) goX(L, k, Math.min(27.2, Math.max(4.8, px + side * 3)));   // too close: back off (the corner rule takes over)
+        else goX(L, k, home, 0.4);
+      }
+      return jump && g;
     },
     // 11 Groundwork: run over crumble, jump hidden spikes on islands & end
     (L, k, st) => {
@@ -251,32 +353,94 @@ const run = ([onlyCourse, onlyLevel]) => {
       return J(st, 'a', L.px > 6.5 && L.player.grounded) || J(st, 'b', L.px > 14.5 && L.player.grounded) ||
              J(st, 'c', L.px > 22.5 && L.player.grounded);
     },
-    // 20 The Reckoning: gravity flip, crumble+invert, crusher, saw2, climb to fleeing door
+    // 20 The Undertaker: stay on the floor, away from the walls. When the soul orb rolls at us, jump at the moment that lands us on top of it. Everything else
+    // (skulls, including the ones it is about to throw; cracks and mounds about to burst; the scythe) goes through
+    // a planner that tries running and jumping options and picks one that nothing touches. Stunned: banish it
     (L, k, st) => {
-      const p = L.player;
-      if (!st.ph) {
-        if (L.invert) k.left = 1; else k.right = 1;
-        if (L.px > 26.2) st.ph = 1;
-        return J(st, 'saw2', L.px > 23.0 && p.grounded) ? 16 : false;
+      const q = qteBot(L, k, st); if (q !== null) return q;
+      const b = L.bosses[0];
+      if (L.cine || !b || b.dead || b.state === 'dying') return false;
+      const p = L.player, g = p.grounded, px = L.px, lc = b.x + b.w / 2;
+      const underSlab = () => false;   // (the crypt is flat)
+      const clear = (x) => Math.min(29.5, Math.max(2.5, x));
+      // what is coming: skulls now and the ones still to be thrown, cracks and mounds, the scythe, the lich
+      if (b.state === 'skullTell') { const dir = Math.sign(px - lc) || 1; st.stream = { t0: L.t + b.tellFor - b.st, n: [0, 3, 3, 4][b.phase], dir, x0: lc + dir * 0.9 }; }
+      const projs = L.hz.filter((h) => h.atk === 'skull').map((h) => ({ x: h.x, y: h.y, r: h.r, vx: h.vx, vy: h.vy, g: 40, bounceY: 14.64, bounceVy: -5, life: h.life }));
+      if (st.stream) for (let i = 0; i < st.stream.n; i++) {
+        const at = st.stream.t0 + i * 0.3 - L.t;
+        if (at > 0) projs.push({ x: st.stream.x0, y: 14.64, r: 0.36, vx: st.stream.dir * 5.5, vy: -3, g: 40, bounceY: 14.64, bounceVy: -5, spawn: at, life: 2.6 });
       }
-      if (st.ph === 1) {
-        if (L.px > 24.0 && p.y > 13.5) { k.left = 1; return false; }
-        k.right = L.px < 26.8;
-        if (p.grounded && p.y < 13.5) st.ph = 2;
-        return J(st, 's1', p.grounded && L.px <= 24.1);
+      const rects = [];
+      for (const h of L.hz) {
+        if (h.atk === 'bones') rects.push({ x: h.x, y: h.y, w: h.w, h: h.h, t0: h.live ? 0 : h.warn - 0.02, t1: h.live ? 0.5 - h.up : h.warn + 0.5 });
+        if (h.atk === 'hands') rects.push({ x: h.x, y: h.y, w: h.w, h: h.h, t0: h.live ? 0 : h.warn - 0.02, t1: h.live ? 0.4 - h.up : h.warn + 0.4 });
+        if (h.atk === 'scythe') rects.push({ x: h.x, y: h.y, w: h.w, h: h.h, t0: 0, t1: 0.25 });
       }
-      if (st.ph === 2) {
-        k.right = L.px < 29.0;
-        if (p.grounded && p.y < 11.5) st.ph = 3;
-        return J(st, 's2', p.grounded && L.px > 26.3);
+      // skulls are born at the lich's hand: don't be there while a stream is coming out
+      if (st.stream && L.t < st.stream.t0 + st.stream.n * 0.3 + 0.2) rects.push({ x: lc - 1.8, y: 13.2, w: 3.6, h: 1.8, t0: 0, t1: st.stream.t0 - L.t + st.stream.n * 0.3 + 0.3 });
+      if (b.state === 'scytheTell') rects.push({ x: b.face > 0 ? b.x + b.w : b.x - 2.4, y: b.y + 0.2, w: 2.4, h: 2.4, t0: b.tellFor - b.st - 0.02, t1: b.tellFor - b.st + 0.25 });
+      if (b.state === 'blinkIn' && b.scythe) rects.push({ x: b.x - 2.6, y: b.y, w: b.w + 5.2, h: b.h, t0: 0.38, t1: 1.2 });
+      // where we would like to be
+      let goal = null;
+      const orb = L.hz.find((h) => h.atk === 'orb' && !h.kick && h.live);
+      if (b.state === 'stunned' && b.stun > Math.max(0, Math.abs(lc - px) - 1) / 8 + 0.1) goal = lc;
+      else if (!orb) { const want = clear(lc + (px < lc ? -6 : 6)); if (Math.abs(want - px) > 1.2 && !underSlab(want)) goal = want; }
+      if (goal === null && underSlab(px)) goal = clear(px + (px < 16 ? -2.2 : 2.2));
+      if (st.stunWalk && b.state !== 'stunned') st.stunWalk = false;
+      const wantDir = goal === null ? 0 : Math.abs(goal - px) < 0.2 ? 0 : Math.sign(goal - px);
+      if (!g) {   // in the air: keep the plan's direction unless steering elsewhere (or to a spot) keeps us alive
+        const keep = st.plan ? st.plan.dir : 0;
+        for (const dir of [keep, -1, 1, 0]) if (planSafe(p, dir, false, projs, rects, 0.8)) { if (dir > 0) k.right = 1; if (dir < 0) k.left = 1; return false; }
+        const spots = [];
+        for (const r of rects) spots.push(r.x - 0.55, r.x + r.w + 0.55);
+        spots.sort((a, c) => Math.abs(a - px) - Math.abs(c - px));
+        for (const x of spots) if (x > 2 && x < 30 && planSafe(p, 0, false, projs, rects, 0.8, 15, false, x)) { goX(L, k, x, 0.15); return false; }
+        if (keep > 0) k.right = 1; if (keep < 0) k.left = 1;
+        return false;
       }
-      if (st.ph === 3) {
-        if (L.px > 28.4 && p.grounded && p.y > 9.5) { k.left = 1; return false; }
-        k.right = 1;
-        if (p.grounded && p.y < 9.5) st.ph = 4;
-        return J(st, 's3', p.grounded && L.px <= 28.5);
+      st.plan = null;
+      // the orb: stand still and jump straight up as it arrives (it rolls under and we land on it). Too close
+      // for that: back away for room; cornered: jump over it
+      if (orb) {
+        const vmax = [0, 5, 6, 7][b.phase], dist = Math.abs(orb.x - px), away = Math.sign(px - orb.x) || 1;
+        const orbP = { x: orb.x, y: orb.y, r: orb.r, vx: orb.vx, homing: { a: 6, vmax } };
+        if (orbJump(px, orb, 6, vmax) === 'stomp' && planSafe(p, 0, true, projs, rects, 0.7)) return true;
+        if (orbJump(px, orb, 6, vmax, false) === 'hit' && dist < 3.2) {
+          const room = away > 0 ? 29.5 - px : px - 2.5;
+          if (room > 1.5 && planSafe(p, away, false, projs.concat([orbP]), rects, 0.5)) { if (away > 0) k.right = 1; else k.left = 1; return false; }
+          if (planSafe(p, -away, true, projs, rects, 0.7)) { st.plan = { dir: -away }; if (away > 0) k.left = 1; else k.right = 1; return true; }
+        }
       }
-      if (L.px > 30.2) k.left = 1; else k.right = 1;
+      // try options; a plan that lands on the orb wins, then any plan nothing touches
+      const near = projs.filter((q) => !q.spawn).sort((a, c) => Math.abs(a.x - px) - Math.abs(c.x - px))[0];
+      const toward = near ? (Math.sign(near.x - px) || 1) : wantDir || 1;
+      const opts = [[wantDir, false], [0, true], [toward, true], [-toward, true], [-toward, false], [0, false], [toward, false], [0, true, true], [toward, true, true], [-toward, true, true],
+        [toward, true, false, 0.08], [toward, true, false, 0.16], [toward, true, false, 0.26], [0, true, false, 0.12], [0, true, false, 0.24]];
+      // a safe plan that doesn't end up in a corner, else any safe plan; a 'jump later' plan runs now, jumps later
+      let pick = null, cornered = null;
+      for (const [dir, jump, hop, later] of opts) {
+        const end = {}, r = planSafe(p, dir, jump, projs, rects, orb ? 1.0 : 0.8, 15, hop, null, end, later || 0);
+        if (!r) continue;
+        if (end.x > 3.5 && end.x < 28.5) { pick = [dir, jump && !later]; break; }
+        if (!cornered) cornered = [dir, jump && !later];
+      }
+      if (!pick) pick = cornered;
+      if (!pick) {   // run to a spot and stop there: the gaps between cracks, the edges just outside them
+        const spots = [];
+        for (const r of rects) spots.push(r.x - 0.55, r.x + r.w + 0.55);
+        spots.sort((a, c) => Math.abs(a - px) - Math.abs(c - px));
+        for (const x of spots) {
+          if (x < 2 || x > 30) continue;
+          if (planSafe(p, 0, false, projs, rects, 0.8, 15, false, x)) { goX(L, k, x, 0.15); return false; }
+        }
+      }
+      if (pick) {
+        const [dir, jump] = pick;
+        if (dir > 0) k.right = 1; if (dir < 0) k.left = 1;
+        if (jump) st.plan = { dir };
+        return jump;
+      }
+      if (wantDir > 0) k.right = 1; if (wantDir < 0) k.left = 1;
       return false;
     },
     // 21 Leap of Faith: jump the first hole into the middle one, land in the bonus room, walk to its portal
@@ -395,8 +559,81 @@ const run = ([onlyCourse, onlyLevel]) => {
       { d: -1, at: 12.4, to: 9.2 },                                       // hole
       { d: -1, at: 2.6, walk: 1 },                                        // portal
     ]),
-    // 30 The Undoing: one hop list per room
-    (L, k, st) => { const r = L.room; st[r] = st[r] || {}; return undoing[r](L, k, st[r]); },
+    // 30 Old Gnasher: hide behind an anchor. The lunge flies straight at where we stood when it aimed, so stand
+    // in an anchor's shadow on the floor (seen from its head) and it impales itself. Out of cover when it aims:
+    // a planner times the side-step or the jump over its head and body. Jump the rolling saws; walk against the
+    // current; step out of bubbling geysers. Stunned on the floor: walk into its head and rip it out
+    (L, k, st) => {
+      const q = qteBot(L, k, st); if (q !== null) return q;
+      const b = L.bosses[0];
+      if (L.cine || !b || b.dead || b.state === 'dying') return false;
+      const p = L.player, g = p.grounded, px = L.px, up = L.g < 0;
+      const surf = up ? 3 : 15, foot = up ? 3.45 : 14.55;   // our surface, and our centre's y on it
+      const hx = b.x + b.w / 2, hy = b.y + b.h / 2;
+      // the shadow each anchor casts on our surface from the head
+      const shadows = [];
+      for (const a of BOSSES.gnasher.anchors) {
+        const ay = up ? a.y + a.h : a.y;   // the side facing away from us... the face nearest the head
+        if ((up && hy <= a.y + a.h) || (!up && hy >= a.y)) continue;   // head on our side of the anchor: no shadow
+        const k0 = (foot - hy) / ((up ? a.y + a.h : a.y) - hy);
+        const x0 = hx + (a.x - hx) * k0, x1 = hx + (a.x + a.w - hx) * k0;
+        shadows.push([Math.min(x0, x1) + 0.5, Math.max(x0, x1) - 0.5]);
+      }
+      const inShadow = (x) => shadows.some(([a, z]) => x > a && x < z);
+      const projs = L.hz.filter((h) => h.atk === 'saw').map((h) => ({ x: h.x, y: h.y, r: h.r, vx: h.vx }));
+      // its body and head, a little fattened since it keeps moving
+      for (const h of L.hz) if (h.boss === b && h.r === 0.45 && h.live) projs.push({ x: h.x, y: h.y, r: 0.7, vx: 0 });
+      const harmless = ['impaled', 'falling', 'stunned', 'choke', 'struck', 'bonk', 'hurt', 'roar'].includes(b.state);
+      const rects = L.hz.filter((h) => h.atk === 'geyser').map((h) => ({ x: h.x - 0.2, y: 3, w: h.w + 0.4, h: 12, t0: h.live ? 0 : h.warn - 0.05, t1: h.live ? 0.7 - h.up : h.warn + 0.7 }));
+      if (!harmless) rects.push({ x: b.x - 0.3, y: b.y - 0.3, w: b.w + 0.6, h: b.h + 0.6, t0: 0, t1: 9 });
+      if (b.state === 'lunge' || b.state === 'lungeTell') {
+        // the line it will fly along: from the head through the aim point, to the edge of the room
+        const ax = b.state === 'lunge' ? hx + b.dir.x * 40 : b.aim.x + (b.aim.x - hx) * 3, ay = b.state === 'lunge' ? hy + b.dir.y * 40 : b.aim.y + (b.aim.y - hy) * 3;
+        const blocked = BOSSES.gnasher.anchors.some((a) => {
+          for (let i = 0; i <= 60; i++) { const x = hx + ((b.state === 'lunge' ? hx + b.dir.x * 40 : b.aim.x) - hx) * i / 60, y = hy + ((b.state === 'lunge' ? hy + b.dir.y * 40 : b.aim.y) - hy) * i / 60; if (x > a.x - 0.8 && x < a.x + a.w + 0.8 && y > a.y - 0.6 && y < a.y + a.h + 0.6) return true; }
+          return false;
+        });
+        // each point of the line is dangerous only while the head goes past it (24 tiles a second)
+        const wait = b.state === 'lungeTell' ? b.tellFor - b.st : 0, len = Math.hypot(ax - hx, ay - hy);
+        if (!blocked) for (let i = 0; i <= 80; i++) {
+          const x = hx + (ax - hx) * i / 80, y = hy + (ay - hy) * i / 80, at = wait + (len * i / 80) / 24;
+          if (x < 0 || x > 32 || y < 2.5 || y > 15.5) break;
+          rects.push({ x: x - 1.3, y: y - 1.1, w: 2.6, h: 2.2, t0: at - 0.08, t1: at + 0.6 });
+        }
+      }
+      let goal = null;
+      if ((b.state === 'stunned' || b.state === 'choke') && Math.abs(b.y + b.h / 2 - foot) < 1.5) goal = hx;
+      else if (b.state === 'gape') goal = px + (Math.sign(px - hx) || 1) * 4;
+      else if (shadows.length) {
+        const c = shadows.map(([a, z]) => (a + z) / 2).filter((x) => x > 5 && x < 27).sort((u, v) => Math.abs(u - px) - Math.abs(v - px))[0];
+        if (c !== undefined) goal = c;
+      }
+      // keep off the walls
+      if (goal !== null && !(b.state === 'stunned' || b.state === 'choke')) goal = Math.min(27, Math.max(5, goal));
+      if ((px < 4.5 || px > 27.5) && goal === null) goal = px < 16 ? 6 : 26;
+      const wantDir = goal === null || Math.abs(goal - px) < 0.2 ? 0 : Math.sign(goal - px);
+      if (!g) { const pa = { x: p.x, y: p.y, vx: p.vx, vy: p.vy, grounded: false, wind: L.wind, minX: 0, maxX: 32 }, keep = st.plan ? st.plan.dir : wantDir; for (const dir of [keep, -1, 1, 0]) if (planSafe(pa, dir, false, projs, rects, 0.7, surf)) { if (dir > 0) k.right = 1; if (dir < 0) k.left = 1; return false; } return false; }
+      st.plan = null;
+      const opts = [[wantDir, false], [0, true], [1, true], [-1, true], [1, false], [-1, false], [0, false], [0, true, true], [1, true, true], [-1, true, true]];
+      let pick = null, cornered = null;
+      const pw = { x: p.x, y: p.y, vx: p.vx, vy: p.vy, grounded: p.grounded, wind: L.wind, minX: 0, maxX: 32 };   // no walls in the depths
+      if (b.state === 'gape') rects.push({ x: b.x - 0.4, y: b.y - 0.4, w: b.w + 0.8, h: b.h + 0.8, t0: 0, t1: 9 });   // its open mouth
+      for (const [dir, jump, hop] of opts) {
+        const end = {};
+        if (!planSafe(pw, dir, jump, projs, rects, 0.8, 15, hop, null, end)) continue;
+        if (end.x > 4.5 && end.x < 27.5) { pick = [dir, jump]; break; }
+        if (!cornered) cornered = [dir, jump];
+      }
+      if (!pick) pick = cornered;
+      if (pick) {
+        const [dir, jump] = pick;
+        if (dir > 0) k.right = 1; if (dir < 0) k.left = 1;
+        if (jump) st.plan = { dir };
+        return jump;
+      }
+      if (wantDir > 0) k.right = 1; if (wantDir < 0) k.left = 1;
+      return false;
+    },
     // 31 Laser Tag: wait out each beam (the run speeds up halfway), tap over the last spike
     (L, k, st) => { const g = L.player.grounded; beamWait(L, k, g); return J(st, 'a', g && L.px > 27.4) ? 10 : false; },
     // 32 Ladder Lie
@@ -426,13 +663,57 @@ const run = ([onlyCourse, onlyLevel]) => {
     sawtooth,
     // 39 Crumble Tower
     tower,
-    // 40 Final Exam
+    // 40 The Mimic: stand at the right edge of the left lava pit; its leaps from the right overshoot into the
+    // lava and it claws out at our feet, stunned: slam it shut. A planner jumps the tongue and the dash, and steps
+    // out from under molten coins (its leaps and dashes are modelled as moving boxes). Swallowed: mash out
     (L, k, st) => {
-      const g = L.player.grounded;
-      beamWait(L, k, g);
-      if (L.invert) { k.left = k.right; k.right = 0; }
-      if (!g && ((L.g < 0 && L.px > 8 && L.px < 13 && !st.a) || (L.g > 0 && L.px > 16 && L.px < 19.5 && st.a) || (L.g < 0 && L.px > 25 && st.a))) k.right = 0;
-      return J(st, 'a', g && L.g < 0 && L.px > 11.6);
+      const q = qteBot(L, k, st); if (q !== null) return q;
+      const b = L.bosses[0];
+      if (L.cine || !b || b.dead || b.state === 'dying') return false;
+      const p = L.player, g = p.grounded, px = L.px, mc = b.x + b.w / 2;
+      const projs = L.hz.filter((h) => h.atk === 'coins' && h.live).map((h) => ({ x: h.x, y: h.y, r: h.r + 0.1, vx: h.vx, vy: h.vy, g: 40 }));
+      const rects = [];
+      for (const h of L.hz) if (h.atk === 'lava') rects.push({ x: h.x - 0.2, y: h.y, w: h.w + 0.4, h: h.h, t0: h.live ? 0 : h.warn - 0.05, t1: h.live ? 0.75 - h.up : h.warn + 0.75 });
+      const tg = L.hz.find((h) => h.atk === 'tongue');
+      const face = b.face || -1, mouthX = face > 0 ? b.x + b.w : b.x;
+      if (b.state === 'tongueTell' || tg) {
+        const t0 = b.state === 'tongueTell' ? b.tellFor - b.st : 0, left = tg ? 0.5 - b.st : 0.5;
+        rects.push({ x: face > 0 ? mouthX : mouthX - 8, y: 14.0, w: 8, h: 0.75, t0: t0 - 0.03, t1: t0 + left });
+      }
+      const danger = !['stunned', 'struck', 'lava', 'hurt', 'roar'].includes(b.state) && !b.hidden;
+      if (danger && b.state === 'leap') {   // its arc, from now: x + vx t, y + vy t + 20 t^2
+        rects.push({ x: b.x - 0.1, y: b.y - 0.1, w: b.w + 0.2, h: b.h + 0.2, t0: 0, t1: Math.max(0, 0.85 - b.st) + 0.02, vx: b.vx, vy: b.vy, g: 40 });
+      } else if (danger && b.state === 'dash') {
+        rects.push({ x: b.x - 0.1, y: b.y - 0.1, w: b.w + 0.2, h: b.h + 0.2, t0: 0, t1: Math.max(0, 1.1 - b.st), vx: b.face * [0, 12, 13, 14][b.phase] });
+      } else if (danger && b.state === 'dashTell') {
+        rects.push({ x: b.x - 0.1, y: b.y - 0.1, w: b.w + 0.2, h: b.h + 0.2, t0: b.tellFor - b.st, t1: b.tellFor - b.st + 1.1, vx: (Math.sign(px - mc) || 1) * [0, 12, 13, 14][b.phase] });
+      } else if (danger) rects.push({ x: b.x - 0.2, y: b.y - 0.2, w: b.w + 0.4, h: b.h + 0.4, t0: 0, t1: 9 });
+      // where to be: by the pit; stunned at our feet: walk into it
+      let goal = 11.65;
+      if (b.state === 'stunned' && b.stun > Math.abs(mc - px) / 8 + 0.1) goal = mc;
+      if (b.dead) goal = 26;
+      const wantDir = Math.abs(goal - px) < 0.12 ? 0 : Math.sign(goal - px);
+      const pw = { x: p.x, y: p.y, vx: p.vx, vy: p.vy, grounded: p.grounded, minX: 1, maxX: 31, pits: BOSSES.mimicBoss.pits };
+      const pitAt = (x) => (x > 8.7 && x < 11.3) || (x > 20.7 && x < 23.3);
+      if (!g) {
+        const keep = st.plan ? st.plan.dir : wantDir;
+        for (const dir of [keep, 0, 1, -1]) if (planSafe(pw, dir, false, projs, rects, 0.7)) { if (dir > 0) k.right = 1; if (dir < 0) k.left = 1; return false; }
+        return false;
+      }
+      st.plan = null;
+      // first choice: walk to the goal and stop there
+      if (planSafe(pw, 0, false, projs, rects, 0.8, 15, false, goal)) { goX(L, k, goal, 0.12); return false; }
+      const opts = [[0, true], [1, true], [-1, true], [1, false], [-1, false], [0, false], [0, true, true], [1, true, true]];
+      for (const [dir, jump, hop] of opts) {
+        const end = {};
+        if (!planSafe(pw, dir, jump, projs, rects, 0.8, 15, hop, null, end)) continue;
+        if (pitAt(end.x)) continue;
+        if (dir > 0) k.right = 1; if (dir < 0) k.left = 1;
+        if (jump) st.plan = { dir };
+        return jump;
+      }
+      if (wantDir > 0) k.right = 1; if (wantDir < 0) k.left = 1;
+      return false;
     },
   ];
 
@@ -1504,11 +1785,13 @@ const run = ([onlyCourse, onlyLevel]) => {
   const out = [];
   const runSingle = (i) => {
     R.load(i, 'single');
-    const k = R.keys; const st = {};
-    for (let n = 0; n < 120 * 40; n++) {
+    const k = R.keys; let st = {}, deaths = 0;
+    for (let n = 0; n < 120 * 600; n++) {   // bosses take minutes (intros and retries included)
       const L = R.game.level;
+      // a boss is played like a player would: die, and go again from the checkpoint (a new seed), up to 8 lives
+      if (L.over && L.bosses.length && ++deaths < 8) { R.game.restart(); st = {}; continue; }
       if (L.over) return `DEAD at px=${L.px.toFixed(2)} py=${L.py.toFixed(2)}`;
-      if (L.won) return `won t=${L.t.toFixed(2)}`;
+      if (L.won) return `won t=${L.t.toFixed(2)}${deaths ? ` after ${deaths} deaths` : ''}`;
       k.left = 0; k.right = 0;
       const j = SINGLE[i](L, k, st);
       k.left = !!k.left; k.right = !!k.right;
@@ -1552,7 +1835,7 @@ const run = ([onlyCourse, onlyLevel]) => {
   const names = (m) => window.LEVELS[m];
   SINGLE.forEach((_, i) => want('single', i) && out.push(`[single] ${i + 1} ${names('single')[i].name}: ${runSingle(i)}`));
   // levels that change with the death count: also prove their odd-death layout
-  for (const i of [27, 29, 36]) {
+  for (const i of [27, 36]) {
     if (!want('single', i)) continue;
     R.save.levelDeaths[String(i)] = 1;
     out.push(`[single] ${i + 1} ${names('single')[i].name} (after a death): ${runSingle(i)}`);
@@ -1644,6 +1927,44 @@ const run = ([onlyCourse, onlyLevel]) => {
       window.prompt = oldPrompt;
       chk('knights', k.list.find((q) => q.id === home).name === 'SIR TEST' && k.cur === home && R.game.state === 'knights', 'rename failed');
       k.list.find((q) => q.id === home).name = oldName;
+      // bosses: a hit sets the checkpoint, dying restarts in that phase, a fresh visit starts over; deaths name the boss
+      // 6 hits in phases of 2; every attack hitbox has its own death line; the intro plays once per knight
+      for (const i of [9, 19, 29, 39]) {
+        R.load(i, 'single'); let L = R.game.level, b = L.bosses[0];
+        chk('boss', b && b.phase === 1 && b.hp === 6 && b.perPhase === 2, `level ${i + 1}: no boss at phase 1 with 6 hp`);
+        chk('boss', !L.cine, `level ${i + 1}: the intro played again for a knight who has seen it`);
+        b.hidden = false; L.hitBoss(b); b.inv = 0; b.hidden = false; L.hitBoss(b);
+        chk('boss', b.phase === 2 && b.hp === 4, `level ${i + 1}: two hits should start phase 2 (phase ${b.phase}, hp ${b.hp})`);
+        L.kill(L.player, 'boss', b);
+        chk('boss', L.kind === b.id, `level ${i + 1}: boss death read as ${L.kind}`);
+        R.game.restart(); L = R.game.level; b = L.bosses[0];
+        chk('boss', b.phase === 2 && b.hp === 4, `level ${i + 1}: restart lost the checkpoint (phase ${b.phase}, hp ${b.hp})`);
+        R.load(i, 'single');
+        chk('boss', R.game.level.bosses[0].phase === 1, `level ${i + 1}: a fresh visit kept the checkpoint`);
+      }
+      for (const k of Object.keys(window.BOSSES.lines)) chk('boss', window.BOSSES.lines[k].length > 0, `no death lines for ${k}`);
+      // a first visit plays the intro; jump skips it after half a second, and the fight starts
+      { const seen = R.save.seen; R.save.seen = {};
+        R.load(9, 'single'); const L = R.game.level, b = L.bosses[0];
+        chk('cine', !!L.cine && b.state === 'wait', 'the Warden intro did not play on a first visit');
+        L.kill(); chk('cine', !L.over, 'a knight died during a cutscene');
+        R.step(70); R.pressed.add('jump'); R.step(2);
+        chk('cine', !L.cine && b.state !== 'wait' && R.save.seen.warden, 'skipping the intro did not start the fight');
+        R.save.seen = seen; }
+      // quick-time events: the right keys in order win, a wrong key fails, mashing escapes
+      { R.load(0, 'single'); const L = R.game.level; let res = null;
+        L.startQte({ keys: ['left', 'jump', 'right'], time: 1, onWin: () => (res = 'win'), onFail: () => (res = 'fail') });
+        R.keys.left = true; R.step(1); R.keys.left = false; R.pressed.add('jump'); R.step(1); R.keys.right = true; R.step(1); R.keys.right = false;
+        chk('qte', res === 'win' && !L.qte, `a correct sequence gave ${res}`);
+        res = null; L.startQte({ keys: ['left', 'right'], time: 1, onWin: () => (res = 'win'), onFail: () => (res = 'fail') });
+        R.keys.right = true; R.step(1); R.keys.right = false;
+        chk('qte', res === 'fail', `a wrong key gave ${res}`);
+        res = null; L.startQte({ mash: 4, time: 1, onWin: () => (res = 'win'), onFail: () => (res = 'fail') });
+        for (let n = 0; n < 4; n++) { R.pressed.add('jump'); R.step(1); }
+        chk('qte', res === 'win', `mashing gave ${res}`);
+        res = null; L.startQte({ mash: 4, time: 0.2, onWin: () => (res = 'win'), onFail: () => (res = 'fail') });
+        R.step(30);
+        chk('qte', res === 'fail', `running out of time gave ${res}`); }
       // title buttons: PLAY / SETTINGS / LEADERBOARD / EXIT
       const G = R.game, calm0 = R.save.calm;
       G.state = 'title'; G.tSel = 0; R.key('Enter');
@@ -1685,7 +2006,7 @@ function inVm() {
     localStorage: { getItem: (k) => store[k] || null, setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } },
   };
   sb.window = sb; vm.createContext(sb);
-  for (const f of ['levels.js', 'game.js']) vm.runInContext(fs.readFileSync(path.join(root, 'js', f), 'utf8'), sb, { filename: f });
+  for (const f of ['levels.js', 'bosses.js', 'game.js']) vm.runInContext(fs.readFileSync(path.join(root, 'js', f), 'utf8'), sb, { filename: f });
   return vm.runInContext('(' + run.toString() + ')', sb)([onlyCourse, onlyLevel]);
 }
 

@@ -2,9 +2,10 @@
 <!-- Dev harness: the game, jumped straight to a screen, level or cutscene moment via the query string.
      Keep the <body> in sync with index.html. Screenshot it with tools/shot.sh.
        ?state=title|mode|select|admin|end   a menu screen   (&t=SECONDS sets the menu clock)
-       ?level=N[&mode=multi|special][&run=STEPS][&die=1]   a level; run holds right for STEPS ticks (120/s)
+       ?level=N[&mode=multi|special][&run=STEPS][&die=1][&phase=N]   a level (phase: start a boss there); run holds right for STEPS ticks (120/s)
        ?cut=intro|area1|area2|area3|ending&t=SECONDS[&mode=...]   a cutscene frame
        ?win=N[&mode=...]   finish level N and log where the game goes next (console: FLOW ...)
+       &seen=1 skip the boss intros   &defeat=1[&t=SECONDS] a boss's defeat cutscene   &qte=strike|mash a quick-time prompt
        ?state=knights&knights=1[&tab=0-3]   the leaderboard with demo knights (in memory only)
        &touch=1   show the touch buttons     &calm=1   reduce flashing on -->
 <html lang="en">
@@ -44,6 +45,7 @@
   }
   </script>
   <script src="js/levels.js"></script>
+  <script src="js/bosses.js"></script>
   <script src="js/fx-data.js"></script>
   <script src="js/vendor/three.min.js"></script>
   <script src="js/cutscenes.js"></script>
@@ -64,10 +66,17 @@
     if (q.get('cut')) { R.game.setMode(mode); R.playCut(q.get('cut'), () => { R.game.state = 'title'; }); if (R.game.cut) R.game.cut.t = +(q.get('t') || 0); return; }
     const st = q.get('state');
     if (st) { R.game.state = st; R.game.kTab = +(q.get('tab') || 0); R.game.setMode(mode); if (q.get('t')) R.game.time = +q.get('t'); return; }
+    if (q.get('seen')) R.save.seen = { warden: 1, undertaker: 1, gnasher: 1, mimicBoss: 1 };
     R.load(+(q.get('level') || 1) - 1, mode);
+    if (q.get('phase')) { const i = +q.get('level') - 1; R.game.ckpt = { k: mode === 'single' ? String(i) : `${mode}:${i}`, phase: +q.get('phase') }; R.game.restart(); }
     const run = +(q.get('run') || 0);
     if (run) { R.ctl[0].right = true; R.step(run); R.ctl[0].right = false; }
     if (q.get('die')) R.game.level.kill();
+    const L = R.game.level, boss = L.bosses[0];
+    if (q.get('defeat') && boss) { while (!boss.dead && !L.cine) { boss.inv = 0; boss.hidden = false; L.hitBoss(boss); } L.freezeT = 0; R.step(+(q.get('t') || 0) * 120); }
+    if (q.get('qte') === 'strike') L.startQte({ keys: ['left', 'jump', 'right', 'right'], time: 1.6, label: 'STRIKE!' });
+    if (q.get('qte') === 'mash') { L.startQte({ mash: 9, time: 1.45, label: 'BREAK FREE!' }); L.qte.n = 4; }
+    if (q.get('qte')) { L.qte.i = q.get('qte') === 'strike' ? 1 : 0; L.qte.t = 0.6; }
   })();
   </script>
 </body>

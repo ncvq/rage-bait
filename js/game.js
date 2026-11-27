@@ -78,6 +78,7 @@
     crushFall: 'falling block', crushGate: 'gate', crusher: 'crusher', crushCrate: 'crate', crushed: 'walls', mimic: 'mimic', redLight: 'red light',
     chainFell: 'chain', chainDropped: 'chain',
   };
+  if (window.BOSSES) { Object.assign(DEATH, BOSSES.lines); Object.assign(KILLER, BOSSES.killers); }
   const MOCK_LINES = [
     '{l} died {n} times. {w} did the work.', '{w} carried. {l} was luggage.', '{l}: {n} deaths. legendary.',
     '{l} should hold the controller the right way up.', '{w} would like a refund on {l}.',
@@ -97,6 +98,7 @@
     // best: furthest level ever reached per mode (strikes can take progress away, never this). course length + 1 = beaten
     s.best = Object.assign({ ...s.progress }, s.best || {});
     s.causes = s.causes || {};   // deaths by cause, for each knight's nemesis on the leaderboard
+    s.seen = s.seen || {};       // boss intros already watched (they play on a knight's first visit only)
     return s;
   }
   const knights = (() => {
@@ -191,6 +193,25 @@
       lead: ['c4 - - . d#4 - - . g4 - - . f4 - d#4 -', 'd4 - - . c4 - - . b3 - - - g3 - - -'],
       bass: ['c2 c2 c3 c2 c2 c3 c2 c3 c2 c2 c3 c2 d#2 d#3 f2 f3', 'g#1 g#1 g#2 g#1 g#1 g#2 g#1 g#2 g1 g1 g2 g1 g1 g2 b1 b2'],
       drums: ['k . h k s . h . k k h . s . s s'] },
+    boss0: { bpm: 152,   // the Warden: a march that won't stop
+      lead: ['e4 . e4 f4 e4 . b3 . e4 . e4 f4 g4 - f4 -', 'e4 . e4 f4 e4 . b3 . c4 - b3 - a#3 - b3 -', 'g4 . g4 a#4 g4 . d4 . g4 . a4 g4 f4 - e4 -', 'e4 - - - f4 - - - b3 - - - . . . .'],
+      bass: ['e2 e2 e3 e2 e2 e3 e2 e3 e2 e2 e3 e2 f2 f3 f2 f3', 'e2 e2 e3 e2 e2 e3 e2 e3 c2 c3 c2 c3 b1 b2 b1 b2'],
+      arp: ['e5 . b4 . e5 . f5 . e5 . b4 . g5 . f5 .'],
+      drums: ['k . h k s . h k k . h k s s h s'] },
+    boss1: { bpm: 126,   // the Undertaker: an organ, a waltz gone wrong
+      lead: ['a4 - - c5 - - b4 - - g#4 - - a4 - - .', 'f4 - - a4 - - g#4 - - e4 - - d#4 - - .', 'a4 - - e5 - - d5 - - c5 - - b4 - - .', 'g#4 - - - - - e4 - - - - - . . . .'],
+      bass: ['a1 . . a2 . . a1 . . a2 . . a1 . . e2', 'f1 . . f2 . . e1 . . e2 . . e1 . . g#1'],
+      arp: ['a5 e5 c5 a4 e5 c5 a4 e4 c5 a4 e4 c4 a4 e4 c4 e4'],
+      drums: ['k . . h . . s . . h . . k . s h'] },
+    boss2: { bpm: 140,   // Old Gnasher: churning
+      lead: ['f#4 . . f#4 g4 . f#4 . c#5 - - . b4 . a4 .', 'f#4 . . f#4 g4 . f#4 . d4 - - . c#4 - - -'],
+      bass: ['f#1 f#2 f#1 f#2 f#1 f#2 f#1 f#2 d1 d2 d1 d2 c#1 c#2 c#1 c#2'],
+      arp: ['f#5 c#5 a4 c#5 f#5 c#5 a4 c#5 d5 a4 f#4 a4 c#5 g#4 f4 g#4'],
+      drums: ['k h k h s h k h k h k h s s s h'] },
+    boss3: { bpm: 168,   // the Mimic: frantic
+      lead: ['c5 . c5 d#5 . c5 g4 . c5 . c5 d#5 f5 - d#5 -', 'c5 . c5 d#5 . c5 g4 . g#4 - g4 - f4 - g4 -', 'd#5 . d#5 f5 . d#5 c5 . g5 - f5 - d#5 - d5 -', 'c5 - - - . . . . c4 . c4 . c4 . . .'],
+      bass: ['c2 c3 c2 c3 c2 c3 c2 c3 g#1 g#2 g#1 g#2 g1 g2 g1 g2', 'c2 c3 c2 c3 c2 c3 c2 c3 f1 f2 f1 f2 g1 g2 b1 b2'],
+      drums: ['k h s h k k s h k h s h k s s s'] },
     ending: { bpm: 80,   // the treasure room: something's wrong
       lead: ['a3 - - - a#3 - - - a3 - - - a#3 - - -'],
       bass: ['a1 - - - - - - - a1 - - - - - - -'],
@@ -423,7 +444,11 @@
       this.chained = !!this.mode.chained;
       this.blocks = []; this.spikes = []; this.saws = []; this.lasers = []; this.pads = []; this.flags = []; this.ladders = [];
       this.doors = []; this.texts = []; this.bubbles = [];
-      this.buttons = []; this.gates = []; this.jumpHooks = [];
+      this.buttons = []; this.gates = []; this.jumpHooks = []; this.bosses = [];
+      this.hz = []; this.cine = null; this.qte = null; this.qteFx = null; this.freezeT = 0; this.wind = 0; this.startFns = [];
+      // boss checkpoint: dying in phase N restarts this level in phase N (the flag keeps its promise)
+      this.ckKey = dkey(modeId, idx);
+      this.checkpoint = game.ckpt && game.ckpt.k === this.ckKey ? game.ckpt.phase : 1;
       this.rope = ROPE; this.snagT = 0; this.view = { mirror: false, flip: false };
       this.triggers = []; this.timers = [];
       this.g = 1; this.invert = false; this.swap = false; this.jumpDelay = 0; this.speedMul = 1; this.t = 0;
@@ -438,6 +463,7 @@
         this.players.push(makePlayer(sp.x, sp.y, i));
       }
       this.cur = this.players[0];
+      for (const fn of this.startFns) fn(this);
     }
 
     // ---- build API
@@ -495,6 +521,71 @@
       const l = { kind: 'laser', x, y, w, h, on: o.on || 1, off: o.off || 1, phase: o.phase || 0, live: false, warn: false };
       this.lasers.push(l); return l;
     }
+    // A boss (js/bosses.js): the script moves it in o.update(b, dt) and hurts it with L.hitBoss. Touching it kills,
+    // unless o.onTouch(b, p) handles the touch (a stunned boss starts the STRIKE quick-time event instead).
+    // hp is split into phases of perPhase hits; reaching a phase saves it as the checkpoint.
+    boss(o) {
+      const b = { kind: 'boss', hp: 3, perPhase: 1, inv: 0, hitT: -9, dead: false, hidden: false, face: -1, ...o };
+      b.max = b.hp; b.phases = Math.ceil(b.max / b.perPhase);
+      b.phase = Math.min(this.checkpoint, b.phases); b.hp = b.max - (b.phase - 1) * b.perPhase;
+      this.bosses.push(b); return b;
+    }
+    hitBoss(b, by) {
+      if (b.dead || b.hp <= 0 || b.inv > 0 || b.hidden) return false;
+      b.hp--; b.inv = 1.0; b.hitT = this.t; this.freezeT = 0.16;   // a beat of hit-stop
+      sfx.thud(); this.shake(0.4, 0.55); burst(b.x + b.w / 2, b.y + b.h / 2, C.portal, 36, 10);
+      if (b.hp > 0) {
+        const ph = 1 + Math.floor((b.max - b.hp) / b.perPhase);
+        if (b.onHit) b.onHit(b, by);
+        if (ph > b.phase) { b.phase = ph; game.ckpt = { k: this.ckKey, phase: ph }; if (b.onPhase) b.onPhase(b); }
+      } else if (b.onDefeat) b.onDefeat(b, by); else this.killBoss(b);
+      return true;
+    }
+    // an attack's hitbox: a rect, or a circle when it has r (x, y = centre). h.boss + h.atk name it in the death line
+    hit(h) { h.live = h.live !== false; this.hz.push(h); return h; }
+    freeze(sec) { this.freezeT = Math.max(this.freezeT, sec); }
+    atStart(fn) { this.startFns.push(fn); }
+    firstVisit(id) { return !save.seen[id]; }
+    markSeen(id) { save.seen[id] = 1; persist(); }
+    // Quick-time event for player 1: o.keys = a sequence of 'left' | 'right' | 'jump' to press within o.time
+    // (a wrong key fails it), or o.mash = how many jumps to mash within o.time. The world runs at o.slow
+    // speed meanwhile; the knight can't move or be hurt.
+    startQte(o) {
+      pressed[0].delete('jump');
+      this.qte = { keys: o.keys || null, mash: o.mash || 0, i: 0, n: 0, t: 0, time: o.time, slow: o.slow === undefined ? 0.12 : o.slow,
+        label: o.label || '', onWin: o.onWin, onFail: o.onFail, prev: { left: ctl[0].left, right: ctl[0].right } };
+      sfx.reveal();
+    }
+    updateQte(dt) {
+      const q = this.qte, c = ctl[0], keys = [];
+      if (c.left && !q.prev.left) keys.push('left');
+      if (c.right && !q.prev.right) keys.push('right');
+      if (pressed[0].has('jump')) { pressed[0].delete('jump'); keys.push('jump'); }
+      q.prev = { left: c.left, right: c.right };
+      q.t += dt;
+      let res = null;
+      for (const k of keys) {
+        if (q.mash) { if (k === 'jump') { q.n++; sfx.click(); if (q.n >= q.mash) res = 'win'; } }
+        else if (k === q.keys[q.i]) { q.i++; sfx.click(); if (q.i >= q.keys.length) res = 'win'; }
+        else res = 'fail';
+        if (res) break;
+      }
+      if (!res && q.t >= q.time) res = 'fail';
+      if (!res) return;
+      this.qte = null; this.qteFx = { ok: res === 'win', t: 0 };
+      if (res === 'win') { sfx.win(); if (q.onWin) q.onWin(); } else { sfx.trap(); if (q.onFail) q.onFail(); }
+    }
+    // An in-level cutscene: s = { dur, update(t, dt), overlay(t, ui), end() }. The world holds still while the
+    // script moves the boss and the knight. JUMP, ENTER, ESC or a tap skips it after half a second.
+    playCine(s, then) { this.cine = { s, t: 0, then }; pressed[0].delete('jump'); }
+    endCine() {
+      const c = this.cine; if (!c) return;
+      this.cine = null; if (c.s.end) c.s.end();
+      pressed[0].delete('jump'); if (c.then) c.then();
+    }
+    fx(x, y, color, n, speed) { burst(x, y, color, n, speed); }
+    sound(name) { if (sfx[name]) sfx[name](); }
+    killBoss(b) { b.dead = true; this.hz = this.hz.filter((h) => h.boss !== b); }
     ladder(x, y, w, h) { const l = { kind: 'ladder', x, y, w, h }; this.ladders.push(l); return l; }
     pad(x, y, w, g) { const p = { kind: 'pad', x, y, w, g }; this.pads.push(p); return p; }
     flag(x, floorY) { const f = { kind: 'flag', x, y: floorY - 2.2, w: 1, h: 2.2, evil: false }; this.flags.push(f); return f; }
@@ -527,6 +618,20 @@
 
     // ---- simulation
     step(dt) {
+      if (this.cine) {
+        const c = this.cine;
+        c.t += dt; this.t += dt;
+        for (const b of this.bubbles) b.t += dt;
+        this.bubbles = this.bubbles.filter((b) => b.t < 1.4);
+        if (this.shakeT > 0) { this.shakeT -= dt; if (this.shakeT <= 0) this.shakeMag = 0; }
+        c.s.update(c.t, dt);
+        if (c.t >= c.s.dur || (c.t > 0.5 && pressed[0].has('jump'))) this.endCine();
+        else pressed[0].delete('jump');
+        return;
+      }
+      if (this.freezeT > 0) { this.freezeT -= dt; return; }
+      if (this.qteFx) { this.qteFx.t += dt; if (this.qteFx.t > 0.7) this.qteFx = null; }
+      if (this.qte) { this.updateQte(dt); if (this.qte) dt *= this.qte.slow; }
       this.t += dt;
       if (this.shakeT > 0) { this.shakeT -= dt; if (this.shakeT <= 0) this.shakeMag = 0; }
       if (this.banner) {
@@ -555,9 +660,11 @@
       this.cur = this.active()[0] || this.players[0];
 
       this.stepWorld(dt);
+      this.hz = this.hz.filter((h) => !h.gone);
+      if (this.qte) return;   // the knight is frozen (and safe) during a quick-time event
       if (live()) for (const p of this.active()) this.stepPlayer(p, dt);
       if (live() && this.chained) this.chain();
-      if (live()) for (const p of this.active()) { this.checkContacts(p); if (!live()) break; }
+      if (live()) for (const p of this.active()) { this.checkContacts(p); if (!live() || this.qte) break; }
     }
 
     updateButtons(dt) {
@@ -645,6 +752,11 @@
         }
       }
 
+      for (const b of this.bosses) {
+        if (b.dead) continue;
+        b.inv -= dt;
+        if (b.update) b.update(b, dt);
+      }
       for (const s of this.spikes) s.out = approach(s.out, s.target, dt * 14);
       for (const s of this.saws) { s.x += s.vx * dt; s.y += s.vy * dt; s.rot += dt * 12; }
       for (const l of this.lasers) {
@@ -695,7 +807,7 @@
       if (this.ladders.some((l) => overlap(p, l))) p.vy = c.jump ? -6 * g : Math.min(p.vy * g, 2) * g;
 
       // horizontal
-      p.x += p.vx * dt;
+      p.x += (p.vx + this.wind) * dt;
       for (const b of this.blocks) {
         if (!solid(b) || !overlap(p, b)) continue;
         if (b.crate && p.vx && this.pushCrate(b, p.vx > 0 ? p.x + p.w - b.x : p.x - (b.x + b.w))) continue;
@@ -807,6 +919,18 @@
     }
 
     checkContacts(p) {
+      for (const b of this.bosses) {
+        if (b.dead || b.hidden || !overlap(p, b)) continue;
+        if (b.onTouch && b.onTouch(b, p)) return;
+        return this.kill(p, 'boss', b);
+      }
+      for (const h of this.hz) {
+        if (!h.live) continue;
+        if (h.r ? Math.hypot(h.x - clamp(h.x, p.x, p.x + p.w), h.y - clamp(h.y, p.y, p.y + p.h)) < h.r * 0.85 : overlap(p, h)) {
+          if (h.onTouch && h.onTouch(h, p)) return;
+          return this.kill(p, 'boss', h);
+        }
+      }
       for (const s of this.spikes) if (!s.fake && s.out > 0.6 && overlap(p, spikeBox(s))) return this.kill(p, 'spikes', s);
       for (const s of this.saws) {
         const cx = clamp(s.x, p.x, p.x + p.w), cy = clamp(s.y, p.y, p.y + p.h);
@@ -835,7 +959,7 @@
     }
 
     kill(p = this.active()[0], cause = 'restart', src = null) {
-      if (this.over || !p) return;
+      if (this.over || !p || this.cine) return;
       if (admin.god && cause !== 'fell' && cause !== 'restart') return;
       this.over = true; this.victim = p; this.cause = cause;
       const kind = this.deathKind(p, cause, src);
@@ -878,6 +1002,11 @@
     // which DEATH pool fits: looks at the thing that killed p (src) and how p got there
     deathKind(p, cause, src) {
       const t = this.t, g = p.lastGround;
+      if (src && (src.kind === 'boss' || src.boss)) {
+        const id = src.kind === 'boss' ? src.id : src.boss.id, atk = src.atk ? `${id}:${src.atk}` : null;
+        if (atk && DEATH[atk]) return atk;
+        if (DEATH[id]) return id;
+      }
       // a floor that let you through is the real troll, whatever was waiting underneath
       if (cause === 'spikes' || cause === 'saw' || cause === 'laser' || (cause === 'fell' && !this.chained)) {
         if (p.fakeT !== undefined && t - p.fakeT < 1.5) return 'fakeFloor';
@@ -918,6 +1047,7 @@
 
   // ---------------------------------------------------------------- game state
   const game = {
+    ckpt: null,   // { k: level key, phase } while a boss fight is under way
     state: 'title', // title | mode | select | play | end | knights | name | admin | cutscene
     tSel: 0, oSel: 0, exitT: -9,   // title button, settings row, when EXIT was pressed
     kTab: 0, kId: 0, kBack: 'title', kConfirm: null, kNote: '', name: '', nameFresh: false, nameFor: null,   // knights screen
@@ -928,6 +1058,7 @@
     clearInput() { pressed[0].clear(); pressed[1].clear(); },
     setMode(id) { this.mode = id; syncCtl(); },
     start(idx, keepMessage = false) {
+      this.ckpt = null;   // a fresh visit starts a boss from phase 1
       this.idx = idx; this.level = new Level(idx, this.mode); this.state = 'play';
       particles = []; fxs = []; this.clearInput(); if (!keepMessage) this.message = null;
       this.strikes = 0; this.runDeaths = [0, 0];
@@ -1058,6 +1189,8 @@
       }
       if (go) { sfx.click(); game.start(game.sel); }
       if (code === 'Escape') game.state = 'mode';
+    } else if (game.state === 'play' && game.level.cine) {
+      if (game.level.cine.t > 0.5 && (go || code === 'Escape')) game.level.endCine();
     } else if (game.state === 'play') {
       if (code === 'KeyR' && !game.level.won) { if (game.level.mode.players > 1) game.restart(); else game.level.kill(); }
       if (code === 'KeyN' && admin.unlock && !game.level.won && !game.level.over) game.level.win();
@@ -1113,6 +1246,7 @@
         if (i >= 0 && i < game.unlocked()) { game.sel = i; updateSelectScroll(); onKey('Enter'); }
         else if (y < 90) onKey('Escape');
       } else if (game.state === 'cutscene') { if (x > SKIP.x && y < SKIP.y + SKIP.h) onKey('Enter'); }
+      else if (game.state === 'play' && game.level.cine) onKey('Enter');
       else if (game.state === 'end') onKey('Enter');
     });
 
@@ -1413,6 +1547,67 @@
     ctx.drawImage(art, sn(s.x * TILE) - art.width, sn(s.y * TILE) - art.height, art.width * PX, art.height * PX);
   }
 
+  // ---- bosses: js/bosses.js paints them with this kit. r() is in art pixels from the current origin,
+  // R() in screen units; at(x, y, fn) moves the origin to tile (x, y) and mirrors it when flip is set.
+  const D = {
+    ctx, R, r, sn, PX, TILE, VW, VH, C, text,
+    get calm() { return save.calm; },
+    at(x, y, fn, flip) {
+      ctx.save(); ctx.translate(sn(x * TILE), sn(y * TILE)); if (flip) ctx.scale(-1, 1); fn(); ctx.restore();
+    },
+    saw(x, y, rad, rot) { drawSaw({ x, y, r: rad, rot }); },
+    crate(b) { drawCrate(b); },
+    door(b, t, L) { drawDoor(b, t, L); },
+    // a filled pixel disc (radius in art pixels), centred on tile (x, y)
+    disc(x, y, rpx, col) {
+      const cx = sn(x * TILE), cy = sn(y * TILE);
+      for (let j = -rpx; j < rpx; j++) { const hw = Math.round(Math.sqrt(rpx * rpx - (j + 0.5) * (j + 0.5))); R(cx - hw * PX, cy + j * PX, hw * 2 * PX, PX, col); }
+    },
+  };
+  function drawBoss(b, L, t) {
+    if (b.dead) return;
+    const art = window.BOSSES && BOSSES[b.id];
+    if (!art) return;
+    // after a hit it blinks (reduce flashing: a steady half-fade instead)
+    const blink = b.inv > 0 && !L.cine && (save.calm ? (ctx.globalAlpha = 0.6, false) : Math.floor(b.inv * 12) % 2 === 1);
+    if (!blink) art.draw(b, L, t, D);
+    ctx.globalAlpha = 1;
+  }
+  function drawBossLit(b, L, t) {
+    const art = window.BOSSES && BOSSES[b.id];
+    if (!b.dead && art && art.lit) art.lit(b, L, t, D);
+  }
+  // the quick-time prompt: the keys as stone tiles, the next one framed in gold, a fuse burning down under them
+  const QTE_GLYPH = { left: '←', right: '→', jump: '↑' };
+  function drawQte(L) {
+    const q = L.qte;
+    if (q) {
+      const left = Math.max(0, 1 - q.t / q.time), cy = 150;
+      ctx.fillStyle = 'rgba(10,8,12,0.72)'; ctx.fillRect(0, cy - 74, VW, 156);
+      const pulse = save.calm ? 0 : Math.floor(q.t * 8) % 2;
+      text(q.label, VW / 2, cy - 44, 36, pulse ? '#ffe27a' : C.portal, 'center', null, '#2a0a0a');
+      if (q.mash) {
+        panel(VW / 2 - 34, cy - 18, 68, 60, true);
+        text(QTE_GLYPH.jump, VW / 2, cy + 12, 36, C.text);
+        text(`MASH ${q.n} / ${q.mash}`, VW / 2, cy + 62, 16, C.text);
+      } else {
+        const n = q.keys.length, w = 60, gap = 14, x0 = VW / 2 - (n * w + (n - 1) * gap) / 2;
+        q.keys.forEach((k, i) => {
+          const x = x0 + i * (w + gap), done = i < q.i;
+          panel(x, cy - 18, w, 56, i === q.i, done);
+          text(QTE_GLYPH[k], x + w / 2, cy + 10, 32, done ? C.dim : C.text);
+        });
+      }
+      R(VW / 2 - 200, cy + 76, 400, 6, '#0c080c'); R(VW / 2 - 198, cy + 78, sn(396 * left), 2, left < 0.3 ? C.danger : C.portal);
+    }
+    if (L.qteFx) {
+      const f = L.qteFx;
+      ctx.globalAlpha = clamp((0.7 - f.t) / 0.25, 0, 1);
+      text(f.ok ? 'NICE!' : 'MISSED', VW / 2, 150, 54, f.ok ? C.flag : C.danger, 'center', null, '#0a080c');
+      ctx.globalAlpha = 1;
+    }
+  }
+
   function drawLaser(l, t) {
     const x = l.x * TILE, y = l.y * TILE, w = l.w * TILE, h = l.h * TILE, vert = l.h >= l.w;
     if (l.live) {
@@ -1530,6 +1725,7 @@
     for (const pd of L.pads) drawPad(pd, t);
     for (const bt of L.buttons) drawButton(bt);
     for (const s of L.saws) if (!s.buried) drawSaw(s);
+    for (const b of L.bosses) drawBoss(b, L, t);
     for (const l of L.lasers) drawLaser(l, t);
     // level text sits above blocks with a dark outline so gates/ceilings never cut it off
     for (const tx of L.texts) text(tx.str, tx.x * TILE, tx.y * TILE, 18, AREAS[n].text, 'left', null, '#0a080c');
@@ -1554,8 +1750,16 @@
       ctx.fillRect(-VW, y0, x0 + VW, y1 - y0); ctx.fillRect(x1, y0, VW * 2, y1 - y0);
       ctx.globalAlpha = 1;
     }
+    for (const b of L.bosses) drawBossLit(b, L, t);
     for (const b of L.bubbles) drawBubble(b, L);
     ctx.restore();
+
+    if (L.cine) {   // an in-level cutscene: letterbox, captions, the skip button
+      L.cine.s.overlay(L.cine.t, cutUI);
+      R(SKIP.x, SKIP.y, SKIP.w, SKIP.h, '#2a2430'); R(SKIP.x, SKIP.y, SKIP.w, PX, '#6d6578');
+      text('SKIP >>', SKIP.x + SKIP.w / 2, SKIP.y + SKIP.h / 2, 14, L.cine.t > 0.5 ? C.text : C.dim);
+      return;
+    }
 
     // HUD
     const two = L.mode.players > 1, barH = two ? 56 : 30;
@@ -1567,6 +1771,16 @@
       const sh = save.shame[L.mode.id];
       text(`strikes ${'×'.repeat(game.strikes)}${'·'.repeat(Math.max(0, STRIKES - game.strikes))}`, 10, 42, 12, C.portal, 'left');
       text(`shame: RED ${sh[0]} · BLUE ${sh[1]}`, VW - 10, 42, 11, C.text, 'right');
+    }
+    const boss = L.bosses.find((b) => !b.dead);
+    if (boss) {   // name over a health bar; notches mark the phases, the last hit drains out in pale red
+      const bw = 400, bx = VW / 2 - bw / 2, by = barH + 26, seg = (bw - 8) / boss.max;
+      text(boss.name, VW / 2, barH + 12, 15, C.danger, 'center', null, '#0a080c');
+      R(bx, by, bw, 16, '#0c080c'); R(bx + 4, by + 4, bw - 8, 8, '#3a1418');
+      const drain = clamp(1 - (L.t - boss.hitT) / 0.6, 0, 1);
+      R(bx + 4, by + 4, sn(seg * (boss.hp + drain)), 8, '#f0a0a0');
+      R(bx + 4, by + 4, sn(seg * boss.hp), 8, C.danger); R(bx + 4, by + 4, sn(seg * boss.hp), 2, '#ff8a8a');
+      for (let i = boss.perPhase; i < boss.max; i += boss.perPhase) R(bx + 4 + sn(seg * i) - 2, by, 4, 16, '#0c080c');
     }
     // persistent red/green light indicator with 0.45s yellow pre-change warning
     if (L.light) {
@@ -1588,6 +1802,7 @@
       if (L.banner.sub) text(L.banner.sub, VW / 2, VH / 2 + 30, 16, C.text);
       ctx.globalAlpha = 1;
     }
+    drawQte(L);
     if (game.message) {
       const m = game.message, a = clamp((1.6 - m.t) / 0.3, 0, 1);
       ctx.globalAlpha = a; text(m.text, VW / 2, barH + 60, 26, C.danger, 'center', null, '#0a080c'); ctx.globalAlpha = 1;
@@ -2010,7 +2225,7 @@
     updateFx(dt);
     if (game.message) { game.message.t += dt; if (game.message.t > 1.6) game.message = null; }
     if (game.state === 'cutscene' && game.cut) { game.cut.t += dt; if (game.cut.t >= game.cut.s.dur) endCut(); }
-    music.want(game.state === 'play' ? 'area' + areaOf(game.idx) : game.state === 'cutscene' && game.cut ? ({ intro: 'title', ending: 'ending' }[game.cut.s.id] || 'area' + game.cut.s.id.slice(4)) : game.state === 'end' ? 'win' : 'title');
+    music.want(game.state === 'play' ? (game.level.bosses.some((b) => !b.dead) ? 'boss' + areaOf(game.idx) : 'area' + areaOf(game.idx)) : game.state === 'cutscene' && game.cut ? ({ intro: 'title', ending: 'ending' }[game.cut.s.id] || 'area' + game.cut.s.id.slice(4)) : game.state === 'end' ? 'win' : 'title');
 
     baseTransform();
     if (game.state === 'title') drawTitle(game.time);

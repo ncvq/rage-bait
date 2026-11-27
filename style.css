@@ -1,11 +1,13 @@
-:root { --bg: #0d0c1d; }
+@font-face { font-family: 'BoldPixels'; src: url('assets/fonts/BoldPixels.ttf') format('truetype'); font-display: block; }
+:root { --bg: #000; }
 * { box-sizing: border-box; }
 html, body {
   margin: 0; height: 100%; background: var(--bg);
   overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
 }
 #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
-canvas { display: block; image-rendering: auto; border-radius: 6px; box-shadow: 0 0 60px rgba(255, 79, 139, 0.12); }
+/* 480x270 art scaled by a whole number in JS; never smooth it */
+canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
 
 #touch { position: fixed; inset: auto 0 0 0; display: flex; justify-content: space-between; padding: 16px; pointer-events: none; }
 #touch[hidden] { display: none; }

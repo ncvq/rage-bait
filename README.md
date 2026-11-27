@@ -126,3 +126,24 @@ Levels are small scripts on a 32 x 18 tile grid. Traps are just triggers:
 ```
 
 Levels live in `js/levels.js` as three arrays (`SINGLE`, `MULTI`, `SPECIAL`). After editing a level, update its bot policy in `tests/solve.js` and run `node tests/solve.js`.
+
+## Art and effects
+
+The game is drawn at 480x270 and scaled up by a whole number (black bars fill the rest), so every pixel stays square. Each block of 10 levels is a deeper area of the dungeon: The Upper Halls (1-10), The Crypt (11-20), The Flooded Depths (21-30) and The Molten Core (31-40), in every mode.
+
+Torches, the portal, the bat and the death poof are [pixelfx](https://github.com/patch-gg/pixelfx) effects pre-rendered into sprite sheets in `assets/fx/`. To change or regenerate them, edit the list in `tools/build-fx.mjs` and run it against a pixelfx checkout:
+
+```bash
+git clone https://github.com/patch-gg/pixelfx ../pixelfx
+node tools/build-fx.mjs ../pixelfx
+```
+
+## Story and cutscenes
+
+A treasure waits at the bottom of the castle. A new run opens with the knights walking into the castle, every tenth level ends with them coming out of a portal into the next area and a flyover of the hazards waiting there, and the last level ends at the treasure. Cutscenes are voxel scenes in `js/cutscenes.js`, rendered with three.js at 480x270 and posterized so they match the pixel art. Any key or the SKIP button skips them. Without WebGL the game skips them and plays as before.
+
+## Credits
+
+- **BoldPixels** font by YukiPixels (https://yukipixels.itch.io/boldpixels), licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). `assets/fonts/BoldPixels.ttf` is unmodified.
+- **three.js** r159 (https://threejs.org), MIT License, vendored as `js/vendor/three.min.js` (see `js/vendor/three.LICENSE`).
+- **pixelfx** by Patch (https://github.com/patch-gg/pixelfx), MIT License. Some of its effects adapt Hugo Duprez's open-source pixel art VFX (https://www.spritefusion.com/pixel-art-vfx), MIT License.

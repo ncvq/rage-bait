@@ -9,33 +9,34 @@
     grav: 62, jump: 20.5, speed: 8, accG: 90, accA: 60, fric: 80,
     maxFall: 28, coyote: 0.08, buffer: 0.12, w: 0.8, h: 0.9,
   };
+  // the descent palette: dungeon stone, bone, fire-gold portal light
   const C = {
-    bg1: '#14142b', bg2: '#221f45', grid: 'rgba(255,255,255,0.035)',
-    block: '#d9d6ea', blockTop: '#ffffff', blockEdge: '#9f9ac0',
-    spike: '#ffd23f', player: '#ff4f8b', playerDark: '#c2245c', eye: '#14142b',
-    portal: '#3ee6d4', danger: '#ff3b5c', text: '#e8e6f0', dim: 'rgba(232,230,240,0.32)',
-    pad: '#a77bff', flag: '#5cff8f', saw: '#c9c9d6',
-    crate: '#c98b4a', crateDark: '#8a5a2b',
+    bg1: '#16121c', bg2: '#221b2a',
+    block: '#4a4352', blockTop: '#6d6578', blockEdge: '#6b6b78',
+    spike: '#d8ccb0', player: '#c83a4a', playerDark: '#7a1c2e', eye: '#0c080c',
+    portal: '#ffae35', danger: '#e0453a', text: '#e8dcc0', dim: 'rgba(232,220,192,0.4)',
+    pad: '#9a48ec', flag: '#5cc83a', saw: '#a8754f',
+    crate: '#8a5a2b', crateDark: '#4a2e1a',
   };
   const LINK = { orange: '#ff9f43', green: '#5cff8f', purple: '#a77bff', red: '#ff3b5c', blue: '#4fb6ff' };
-  const FONT = 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace';
+  const FONT = '"BoldPixels", ui-monospace, monospace';
   const SKINS = [
-    { main: '#ff4f8b', dark: '#c2245c', name: 'PINK' },
-    { main: '#4fb6ff', dark: '#1f6fb5', name: 'BLUE' },
+    { main: '#c83a4a', dark: '#7a1c2e', hi: '#e8707a', plume: '#ffd23f', name: 'RED' },
+    { main: '#3a7ac8', dark: '#1c3e7a', hi: '#70a8e8', plume: '#ff8a2a', name: 'BLUE' },
   ];
   const STRIKES = 3; // deaths in one level (2-player modes) before you get sent back
   const ROPE = 4.2; // chain length in tiles (special mode)
   const MODES = [
     {
-      id: 'single', name: 'SINGLE PLAYER', sub: 'just you vs. the level', players: 1,
+      id: 'single', name: 'SINGLE PLAYER', sub: 'you vs. the level', players: 1,
       hint: '←/→ or A/D move · SPACE / ↑ / W jump'
     },
     {
-      id: 'multi', name: 'MULTIPLAYER', sub: '2 players · one keyboard', players: 2,
+      id: 'multi', name: 'MULTIPLAYER', sub: '2P · one keyboard', players: 2,
       hint: 'P1: A/D move, W jump   ·   P2: ←/→ move, ↑ jump'
     },
     {
-      id: 'special', name: 'SPECIAL', sub: '2 players · trust us', players: 2, chained: true,
+      id: 'special', name: 'SPECIAL', sub: '2P · trust us', players: 2, chained: true,
       label: 'SPECIAL (CHAINED)', hint: 'P1: A/D move, W jump   ·   P2: ←/→ move, ↑ jump'
     },
   ];
@@ -688,6 +689,7 @@
       for (const q of this.players) {
         if (q.done) continue;
         q.dead = true;
+        spawnFx('poof', (q.x + q.w / 2) * TILE, (this.g > 0 ? q.y + q.h : q.y) * TILE);
         burst(q.x + q.w / 2, q.y + q.h / 2, SKINS[q.idx].main, q === p ? 34 : 18, q === p ? 11 : 7);
       }
       this.shake(0.3, 0.4);
@@ -741,7 +743,7 @@
     setMode(id) { this.mode = id; syncCtl(); },
     start(idx, keepMessage = false) {
       this.idx = idx; this.level = new Level(idx, this.mode); this.state = 'play';
-      particles = []; this.clearInput(); if (!keepMessage) this.message = null;
+      particles = []; fxs = []; this.clearInput(); if (!keepMessage) this.message = null;
       this.strikes = 0; this.runDeaths = [0, 0];
       if (MODE[this.mode].chained && idx === 0) this.level.banner = { text: 'SURPRISE!', sub: "you're chained together. good luck.", t: 0, life: 2.4 };
     },
@@ -756,7 +758,12 @@
         sub: this.idx === 0 && back === 0 ? 'back to level 1. again.' : `back to level ${back + 1}. progress deleted.`,
       };
     },
-    next() { if (this.idx + 1 < course(this.mode).length) this.start(this.idx + 1); else { this.state = 'end'; sfx.win(); } },
+    next() {
+      const n = this.idx + 1;
+      if (n >= course(this.mode).length) playCut('ending', () => { this.state = 'end'; sfx.win(); });
+      else if (n % 10 === 0) playCut('area' + n / 10, () => this.start(n));   // down into the next area
+      else this.start(n);
+    },
   };
 
   const SPEEDS = [1, 0.5, 0.25];
@@ -800,7 +807,11 @@
     } else if (game.state === 'mode') {
       if (code === 'ArrowRight' || code === 'KeyD' || code === 'ArrowDown' || code === 'KeyS') { game.modeSel = Math.min(MODES.length - 1, game.modeSel + 1); sfx.click(); }
       if (code === 'ArrowLeft' || code === 'KeyA' || code === 'ArrowUp' || code === 'KeyW') { game.modeSel = Math.max(0, game.modeSel - 1); sfx.click(); }
-      if (go) { sfx.click(); game.setMode(MODES[game.modeSel].id); game.start(game.reached() - 1); }
+      if (go) {
+        sfx.click(); game.setMode(MODES[game.modeSel].id);
+        const i = game.reached() - 1;
+        if (i === 0) playCut('intro', () => game.start(0)); else game.start(i);   // a fresh run opens at the castle
+      }
       if (code === 'KeyL') {
         sfx.click();
         game.setMode(MODES[game.modeSel].id);
@@ -830,6 +841,8 @@
         game.sel = game.idx;
         updateSelectScroll(true);
       }
+    } else if (game.state === 'cutscene') {
+      if (game.cut && game.cut.t > 0.5 && (go || code === 'Escape')) endCut();   // a short grace so a held jump doesn't skip it
     } else if (game.state === 'end') {
       if (go || code === 'Escape') game.state = 'mode';
     }
@@ -856,7 +869,8 @@
         const i = selectHit(x, y);
         if (i >= 0 && i < game.unlocked()) { game.sel = i; updateSelectScroll(); onKey('Enter'); }
         else if (y < 90) onKey('Escape');
-      } else if (game.state === 'end') onKey('Enter');
+      } else if (game.state === 'cutscene') { if (x > SKIP.x && y < SKIP.y + SKIP.h) onKey('Enter'); }
+      else if (game.state === 'end') onKey('Enter');
     });
 
     cv.addEventListener('wheel', (e) => {
@@ -869,37 +883,163 @@
   }
 
   // ---------------------------------------------------------------- rendering
+  // Everything is drawn in VW units (960x540) onto a 480x270 canvas, so one art pixel is PX = 2 units.
+  // The canvas is then scaled up by a whole number with CSS (black bars around it), never smoothed.
+  const PX = 2, LW = VW / PX, LH = VH / PX;
   const cv = document.getElementById('game');
   const ctx = cv.getContext('2d');
-  let scale = 1;
+  cv.width = LW; cv.height = LH;
   function resize() {
     const dpr = window.devicePixelRatio || 1;
-    scale = Math.min(innerWidth / VW, innerHeight / VH) * 0.98;
-    cv.style.width = Math.floor(VW * scale) + 'px';
-    cv.style.height = Math.floor(VH * scale) + 'px';
-    cv.width = Math.floor(VW * scale * dpr);
-    cv.height = Math.floor(VH * scale * dpr);
-    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    const k = Math.max(1, Math.floor(Math.min((innerWidth * dpr) / LW, (innerHeight * dpr) / LH)));
+    cv.style.width = (LW * k) / dpr + 'px';
+    cv.style.height = (LH * k) / dpr + 'px';
   }
   addEventListener('resize', resize);
   resize();
+  function baseTransform() { ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0); ctx.imageSmoothingEnabled = false; }
 
-  function baseTransform() { const dpr = window.devicePixelRatio || 1; ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0); }
+  const sn = (v) => Math.round(v / PX) * PX;   // snap to the art-pixel grid
+  // a rect snapped to whole art pixels, never thinner than one
+  function R(x, y, w, h, col) {
+    const x0 = sn(x), y0 = sn(y), x1 = Math.max(x0 + PX, sn(x + w)), y1 = Math.max(y0 + PX, sn(y + h));
+    ctx.fillStyle = col; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  }
+  // a rect in art pixels, relative to the current transform (for sprites drawn around an origin)
+  function r(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x * PX, y * PX, w * PX, h * PX); }
 
-  function drawBg() {
-    const gr = ctx.createLinearGradient(0, 0, 0, VH);
-    gr.addColorStop(0, C.bg1); gr.addColorStop(1, C.bg2);
-    ctx.fillStyle = gr; ctx.fillRect(0, 0, VW, VH);
-    ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = 0; x <= COLS; x++) { ctx.moveTo(x * TILE + 0.5, 0); ctx.lineTo(x * TILE + 0.5, VH); }
-    for (let y = 0; y <= ROWS; y++) { ctx.moveTo(0, y * TILE + 0.5); ctx.lineTo(VW, y * TILE + 0.5); }
-    ctx.stroke();
+  // ---- small offscreen painter for cached art (backgrounds, tiles, saw frames, darkness masks)
+  const HEX = {};
+  const hex = (h) => HEX[h] || (HEX[h] = (() => { let s = h.slice(1); if (s.length === 3) s = [...s].map((c) => c + c).join(''); return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16)); })());
+  const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
+  const dith = (x, y) => BAYER[(y & 3) * 4 + (x & 3)];
+  const hash = (x, y) => { let h = (x * 374761393 + y * 668265263) ^ 0x5bd1e995; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+  function paint(W, H, fn) {
+    const d = new Float32Array(W * H * 4);
+    const c = {
+      W, H,
+      px(x, y, col, a = 1) {
+        x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= W || y >= H || a <= 0) return;
+        const [cr, cg, cb] = typeof col === 'string' ? hex(col) : col, i = (y * W + x) * 4, da = d[i + 3], oa = a + da * (1 - a);
+        d[i] = (cr * a + d[i] * da * (1 - a)) / oa; d[i + 1] = (cg * a + d[i + 1] * da * (1 - a)) / oa; d[i + 2] = (cb * a + d[i + 2] * da * (1 - a)) / oa; d[i + 3] = oa;
+      },
+      add(x, y, col, k) { x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= W || y >= H) return; const [cr, cg, cb] = hex(col), i = (y * W + x) * 4; d[i] += cr * k; d[i + 1] += cg * k; d[i + 2] += cb * k; },
+      rect(x, y, w, h, col, a = 1) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) c.px(x + i, y + j, col, a); },
+      disc(cx, cy, rr, col, a = 1) { for (let y = -rr; y <= rr; y++) for (let x = -rr; x <= rr; x++) if (x * x + y * y <= rr * rr + rr * 0.6) c.px(cx + x, cy + y, col, a); },
+      glow(cx, cy, rr, col, k = 0.5) { for (let y = -rr; y <= rr; y++) for (let x = -rr; x <= rr; x++) { const f = 1 - Math.hypot(x, y) / rr; if (f > 0) c.add(cx + x, cy + y, col, k * f * f); } },
+    };
+    fn(c);
+    const cvs = document.createElement('canvas'); cvs.width = W; cvs.height = H;
+    const g = cvs.getContext('2d'), img = g.createImageData(W, H);
+    for (let i = 0; i < d.length; i += 4) { img.data[i] = d[i]; img.data[i + 1] = d[i + 1]; img.data[i + 2] = d[i + 2]; img.data[i + 3] = d[i + 3] * 255; }
+    g.putImageData(img, 0, 0);
+    return cvs;
   }
 
-  function text(str, x, y, size, color = C.text, align = 'center', weight = 'bold') {
-    ctx.font = `${weight} ${size}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle';
-    ctx.fillText(str, x, y);
+  // ---- the four areas of the descent, ten levels each (all three courses)
+  const AREAS = [
+    { name: 'THE UPPER HALLS', mortar: '#16121c', brick: '#2a2333', brickHi: '#352c40', stone: ['#2a2430', '#4a4352', '#6d6578'], top: ['#4f7a3a', '#6b9a48'], text: '#d8ccb0', title: '#ffae35' },
+    { name: 'THE CRYPT', mortar: '#0e0e16', brick: '#1c1c28', brickHi: '#242434', stone: ['#1e1e2a', '#3a3a4c', '#58586e'], top: ['#b8b4a0', '#d8d4c0'], text: '#c8d0e0', title: '#9bdcff' },
+    { name: 'THE FLOODED DEPTHS', mortar: '#08141a', brick: '#11262c', brickHi: '#173238', stone: ['#14282e', '#2a4a50', '#4a7076'], top: ['#3aa890', '#6ae0c0'], text: '#c0f0e0', title: '#6ae0c0' },
+    { name: 'THE MOLTEN CORE', mortar: '#0a0606', brick: '#1a1110', brickHi: '#221614', stone: ['#1a1414', '#3a2a28', '#5a4038'], top: ['#ff5a1a', '#ffb43a'], text: '#ffd8b0', title: '#ffe27a' },
+  ];
+  const areaOf = (idx) => Math.min(AREAS.length - 1, Math.floor(idx / 10));
+
+  // the wall behind everything: bricks plus each area's set dressing, painted once per area
+  const BG = [];
+  function bgArt(n) {
+    if (BG[n]) return BG[n];
+    const A = AREAS[n];
+    return (BG[n] = paint(LW, LH, (c) => {
+      c.rect(0, 0, c.W, c.H, A.mortar);
+      for (let y = 0; y < c.H; y += 8) for (let x = (y / 8) % 2 ? -8 : 0; x < c.W; x += 16) {
+        c.rect(x + 1, y + 1, 15, 7, A.brick); c.rect(x + 1, y + 1, 15, 1, A.brickHi);
+        if (hash(x, y) < 0.12) c.rect(x + 3, y + 3, 10, 3, A.mortar, 0.5);   // a worn brick
+      }
+      if (n === 1) {   // crypt: cracks, skull niches, hanging chains, cobwebs
+        for (const [x0, y0] of [[120, 20], [330, 60], [40, 150]]) { let x = x0; for (let y = y0; y < y0 + 30; y++) { x += Math.round(hash(x, y) * 2 - 1); c.px(x, y, '#08080e'); } }
+        for (const nx of [95, 255, 395]) { c.rect(nx - 6, 98, 13, 11, '#08080e'); c.rect(nx - 4, 100, 9, 7, '#a8a490'); c.rect(nx - 3, 102, 2, 2, '#08080e'); c.rect(nx + 1, 102, 2, 2, '#08080e'); c.rect(nx - 2, 106, 5, 1, '#78745e'); }
+        for (const [cx, len] of [[180, 50], [300, 34], [450, 60]]) for (let y = 0; y < len; y += 3) c.rect(cx + (y / 3) % 2, y, 2, 2, '#3a3a4c');
+        for (const [ox, sx] of [[0, 1], [c.W - 1, -1]]) for (let k = 0; k < 18; k++) { c.px(ox + sx * k, k, '#c8d0e0', 0.3); c.px(ox + sx * k, 0, '#c8d0e0', 0.2); c.px(ox, k, '#c8d0e0', 0.2); if (k % 6 === 0) for (let j = 0; j < k; j++) c.px(ox + sx * j, k, '#c8d0e0', 0.15); }
+      }
+      if (n === 2) {   // flooded: water stains running down, a waterline, still water in the lower third
+        for (let x = 0; x < c.W; x++) { const run = hash(x, 7) < 0.08 ? 20 + hash(x, 9) * 40 : 0; for (let y = 0; y < run; y++) c.px(x, y + 9, '#2a5a58', 0.35 * (1 - y / run)); }
+        for (let y = 170; y < c.H; y++) for (let x = 0; x < c.W; x++) c.px(x, y, y === 170 ? '#4aa0a0' : (y - 170) % 6 === 0 && hash(x >> 3, y) < 0.4 ? '#2a6a70' : '#103a44', y === 170 ? 0.8 : 0.6);
+        for (const [x, y, col] of [[150, 150, '#6ae0c0'], [395, 160, '#9a8cff'], [60, 162, '#6ae0c0']]) { c.glow(x, y, 18, col, 0.3); for (let k = 0; k < 3; k++) { const h = 7 - k * 2; for (let j = 0; j < h; j++) c.rect(x - 4 + k * 4, y - j, 2, 1, j > h - 3 ? '#ffffff' : col); } }
+      }
+      if (n === 3) {   // molten: lava falls far back, glowing cracks, heat from below
+        for (const lx of [60, 300]) for (let y = 0; y < c.H; y++) for (let i = 0; i < 9; i++) { const k = dith(lx + i, y) < 0.5 + 0.3 * Math.sin((y + i * 3) / 5) ? '#ff8a2a' : '#c8401a'; c.px(lx + i, y, i === 0 || i === 8 ? '#701a14' : k, 0.55); }
+        for (let y = 120; y < c.H; y++) for (let x = 0; x < c.W; x++) if (dith(x, y) < (y - 120) / 220) c.add(x, y, '#ff4a10', 0.15);
+        for (const [x0, y0] of [[140, 30], [400, 40], [230, 90], [20, 60]]) { let x = x0; for (let y = y0; y < y0 + 40; y++) { x += Math.round(hash(x, y) * 2 - 1); c.px(x, y, '#ff6a1a'); c.add(x + 1, y, '#ff4a10', 0.2); c.add(x - 1, y, '#ff4a10', 0.2); } }
+      }
+    }));
+  }
+  // block faces: a repeating brick tile, and a ragged top edge (moss, bone, algae, lava) per area
+  const TILES = [];
+  function tileArt(n) {
+    if (TILES[n]) return TILES[n];
+    const A = AREAS[n], [base, mid, hi] = A.stone;
+    const face = paint(28, 14, (c) => {
+      c.rect(0, 0, 28, 14, base);
+      for (const j of [0, 7]) for (const i of j ? [7, 21] : [0, 14]) for (let k = 1; k < 14; k++) {
+        const x = (i + k) % 28;
+        c.rect(x, j + 1, 1, 6, mid); c.px(x, j + 1, hi);
+        if (n === 3 && k > 3 && k < 8 && hash(i, j) < 0.5) c.px(x, j + 4, '#ff6a1a');
+        if (n === 2 && k === 2) c.px(x, j + 2, '#9bf0e0', 0.5);
+      }
+    });
+    const top = paint(60, 5, (c) => {
+      for (let i = 0; i < 60; i++) {
+        const t = hash(i, n + 1);
+        c.px(i, 0, A.top[t < 0.5 ? 0 : 1]); if (t < 0.3) c.px(i, 1, A.top[0]);
+        if (n === 1 && t > 0.85) c.rect(i, 1, 1, 3, A.top[1]);
+        if (n === 2 && t > 0.9) c.rect(i, 1, 1, 4, '#6ae0c0', 0.7);
+      }
+    });
+    return (TILES[n] = { face: ctx.createPattern(face, 'repeat'), top: ctx.createPattern(top, 'repeat') });
+  }
+  // fill a rect with a pattern whose pixels are art pixels, anchored at (ax, ay)
+  function patternRect(pat, x, y, w, h, ax, ay) {
+    pat.setTransform(new DOMMatrix([PX, 0, 0, PX, ax, ay]));
+    ctx.fillStyle = pat; ctx.fillRect(x, y, w, h);
+  }
+
+  // ---- pixelfx sprite sheets (assets/fx, frame data in js/fx-data.js)
+  const FXIMG = {};
+  for (const name in window.FX_DATA || {}) { FXIMG[name] = new Image(); FXIMG[name].src = `assets/fx/${name}.png`; }
+  function drawFx(name, t, x, y, a = 1) {
+    const m = window.FX_DATA && FX_DATA[name], img = FXIMG[name];
+    if (!m || !img.naturalWidth) return;
+    let f = Math.floor(t * m.fps); f = m.loop ? ((f % m.n) + m.n) % m.n : Math.min(f, m.n - 1);
+    ctx.globalAlpha = a;
+    ctx.drawImage(img, (f % m.cols) * m.w, Math.floor(f / m.cols) * m.h, m.w, m.h, sn(x) - m.px * PX, sn(y) - m.py * PX, m.w * PX, m.h * PX);
+    ctx.globalAlpha = 1;
+  }
+  // one-shot effects in the level (death poofs), in VW units at their pivot
+  let fxs = [];
+  function spawnFx(name, x, y) { fxs.push({ name, x, y, t: 0 }); }
+  function updateFx(dt) {
+    for (const f of fxs) f.t += dt;
+    fxs = fxs.filter((f) => f.t < FX_DATA[f.name].n / FX_DATA[f.name].fps);
+  }
+
+  // ---- text: BoldPixels (YukiPixels, CC BY-SA 4.0) at its native 16px or whole multiples of it
+  const fsz = (size) => (size <= 28 ? 32 : size <= 60 ? 64 : 96);
+  function text(str, x, y, size, color = C.text, align = 'center', _weight, outline) {
+    str = String(str).replace(/✕/g, '×');
+    const s = fsz(size);
+    ctx.font = `${s}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    const w = ctx.measureText(str).width;
+    const lx = sn(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x), by = sn(y + s / 4);
+    if (outline) { ctx.fillStyle = outline; for (const [dx, dy] of [[-PX, 0], [PX, 0], [0, -PX], [0, PX]]) ctx.fillText(str, lx + dx, by + dy); }
+    ctx.fillStyle = color; ctx.fillText(str, lx, by);
+    return w;
+  }
+  // the font has no skull, so death counts get this one
+  function skullIcon(x, y, col) {
+    x = sn(x); y = sn(y);
+    R(x + 2, y, 8, 6, col); R(x, y + 2, 12, 4, col); R(x + 2, y + 6, 8, 4, col);
+    R(x + 2, y + 2, 2, 2, C.bg1); R(x + 8, y + 2, 2, 2, C.bg1); R(x + 4, y + 8, 2, 2, C.bg1); R(x + 6, y + 8, 2, 2, C.bg1);
   }
 
   function roundRect(x, y, w, h, r) {
@@ -907,32 +1047,49 @@
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
 
+  function drawBg(n = 0) { ctx.drawImage(bgArt(n), 0, 0, VW, VH); }
+
+  // wall lights and life behind the level; never anything that could pass for a hazard
+  function drawDecor(n, t) {
+    if (n === 0) for (const tx of [5, 13, 21, 29]) drawFx('torch', t + tx * 0.37, tx * TILE, 6.2 * TILE);
+    if (n === 1) {
+      for (const tx of [9, 25]) drawFx('torch-blue', t + tx * 0.37, tx * TILE, 6.2 * TILE);
+      const bx = ((t * 40) % (VW + 600)) - 300;   // a bat crosses the top every so often
+      drawFx('bat', t, bx, 2.6 * TILE, 0.55);
+    }
+    if (n === 2) for (const tx of [7, 24]) drawFx('torch-green', t + tx * 0.37, tx * TILE, 6.2 * TILE);
+    // ambient motes: dust falls in the crypt, spores drift in the depths, embers rise in the core
+    if (n >= 1) for (let k = 0; k < 28; k++) {
+      const sx = hash(k, n) * VW, sp = 10 + hash(n, k) * 18, ph = hash(k, k + n) * VH;
+      if (n === 1) R(sx + Math.sin(t + k) * 6, (ph + t * sp) % VH, PX, PX, 'rgba(200,208,224,0.35)');
+      if (n === 2 && k % 2) R(sx + Math.sin(t * 0.7 + k) * 14, (ph - t * sp * 0.5 + VH * 4) % VH, PX, PX, 'rgba(155,240,224,0.7)');
+      if (n === 3) R(sx + Math.sin(t * 2 + k) * 8, (ph - t * sp * 2.4 + VH * 40) % VH, PX, PX, k % 3 ? '#ff8a2a' : '#ffe27a');
+    }
+  }
+
   function drawButton(bt) {
-    const x = bt.x * TILE, y = bt.y * TILE, w = bt.w * TILE, depth = bt.down ? 3 : 7;
-    ctx.fillStyle = C.blockEdge; ctx.fillRect(x - 2, y - 3, w + 4, 3);
-    ctx.save(); ctx.shadowColor = bt.color; ctx.shadowBlur = bt.down ? 14 : 6;
-    ctx.fillStyle = bt.color; ctx.fillRect(x + 3, y - depth, w - 6, depth - 2); ctx.restore();
+    const x = bt.x * TILE, y = bt.y * TILE, w = bt.w * TILE, depth = bt.down ? 2 : 6;
+    R(x - 2, y - 4, w + 4, 4, '#4a4352');
+    R(x + 4, y - 4 - depth, w - 8, depth, bt.color);
+    R(x + 4, y - 4 - depth, w - 8, PX, 'rgba(255,255,255,0.45)');
   }
 
   function drawCrate(b) {
     const j = b.armed && !b.spiky ? (Math.random() - 0.5) * 4 : 0;
     const x = b.x * TILE + j, y = b.y * TILE, w = b.w * TILE, h = b.h * TILE;
     if (b.spiky) {
-      ctx.fillStyle = C.spike;
-      ctx.beginPath();
       const cx = x + w / 2, cy = y + h / 2;
-      for (let i = 0; i < 16; i++) {
-        const a = (i / 16) * Math.PI * 2, r = i % 2 ? w * 0.5 : w * 0.85;
-        ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      for (let i = 0; i < 16; i++) {   // bone spikes all round
+        const a = (i / 16) * Math.PI * 2, len = i % 2 ? w * 0.5 : w * 0.85;
+        for (let s = 0; s < len; s += PX) R(cx + Math.cos(a) * s - 1, cy + Math.sin(a) * s - 1, PX, PX, C.spike);
       }
-      ctx.closePath(); ctx.fill();
-      ctx.fillStyle = C.danger; ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+      R(x + 4, y + 4, w - 8, h - 8, '#5a1010'); R(x + 6, y + 6, w - 12, h - 12, C.danger);
+      R(x + w * 0.3, y + h * 0.35, 4, 4, '#fff'); R(x + w * 0.62, y + h * 0.35, 4, 4, '#fff'); R(x + w * 0.32, y + h * 0.62, w * 0.36, 2, '#2a0808');
       return;
     }
-    ctx.fillStyle = C.crateDark; ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = C.crate; ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
-    ctx.strokeStyle = C.crateDark; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(x + 4, y + 4); ctx.lineTo(x + w - 4, y + h - 4); ctx.moveTo(x + w - 4, y + 4); ctx.lineTo(x + 4, y + h - 4); ctx.stroke();
+    R(x, y, w, h, '#3a2010'); R(x + 2, y + 2, w - 4, h - 4, C.crate);
+    for (let k = 12; k < h - 4; k += 12) R(x + 2, y + k, w - 4, 2, '#5e3a1c');
+    R(x, y + 6, w, 6, '#6b6b78'); R(x, y + h - 12, w, 6, '#6b6b78'); R(x, y + 6, w, 2, '#9a9aa8'); R(x, y + h - 12, w, 2, '#9a9aa8');
   }
 
   function drawBlock(b, L) {
@@ -940,146 +1097,140 @@
     if (b.crate) return drawCrate(b);
     let ox = 0, oy = 0;
     if (b.pending) { ox = (Math.random() - 0.5) * 3; oy = (Math.random() - 0.5) * 2; }
-    const x = b.x * TILE + ox, y = b.y * TILE + oy, w = b.w * TILE, h = b.h * TILE;
+    const x = sn(b.x * TILE + ox), y = sn(b.y * TILE + oy), w = sn(b.w * TILE), h = sn(b.h * TILE);
     if (b.hidden) {
-      // a cluster of glowing star twinkles, staggered so a few are always shining
-      ctx.save(); ctx.fillStyle = C.portal; ctx.shadowColor = C.portal; ctx.shadowBlur = 10;
+      // a few gold twinkles, staggered so one is always shining
       const n = Math.max(3, Math.round(b.w * 2));
       for (let i = 0; i < n; i++) {
         const ph = (L.t + b.sparkle + i * (1.6 / n) * 1.7) % 1.6;
         if (ph >= 0.7) continue;
-        const k = Math.sin((ph / 0.7) * Math.PI), s = 2 + 5 * k;
+        const k = Math.sin((ph / 0.7) * Math.PI), s = Math.round(1 + 2 * k) * PX;
         const sx = x + w * ((b.sparkle * 7 + i * 0.618) % 1), sy = y + h * (0.2 + 0.6 * ((b.sparkle * 3 + i * 0.382) % 1));
-        ctx.globalAlpha = 0.9 * k;
-        ctx.beginPath();   // four-point star
-        ctx.moveTo(sx, sy - s); ctx.lineTo(sx + s * 0.25, sy - s * 0.25); ctx.lineTo(sx + s, sy); ctx.lineTo(sx + s * 0.25, sy + s * 0.25);
-        ctx.lineTo(sx, sy + s); ctx.lineTo(sx - s * 0.25, sy + s * 0.25); ctx.lineTo(sx - s, sy); ctx.lineTo(sx - s * 0.25, sy - s * 0.25);
-        ctx.fill();
+        ctx.globalAlpha = 0.95 * k;
+        R(sx - s, sy, s * 2 + PX, PX, C.portal); R(sx, sy - s, PX, s * 2 + PX, C.portal); R(sx, sy, PX, PX, '#fff8d6');
       }
-      ctx.restore();
+      ctx.globalAlpha = 1;
       return;
     }
+    // the texture rides along when a block moves, and lines up across blocks that haven't
+    if (b.bx0 === undefined) { b.bx0 = b.x; b.by0 = b.y; }
+    const T = tileArt(areaOf(L.idx)), ax = sn((b.x - b.bx0) * TILE + ox), ay = sn((b.y - b.by0) * TILE + oy);
     if (b.ghost) ctx.globalAlpha = 0.14;   // see-through: a secret room drawn behind it
-    ctx.fillStyle = C.blockEdge; ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = C.block; ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
-    ctx.fillStyle = C.blockTop; ctx.fillRect(x + 2, y + 2, w - 4, 3);
-    if (b.link) {
-      ctx.fillStyle = b.link;
-      for (let k = 0; k * 12 < h - 8; k++) ctx.fillRect(x + w / 2 - 3, y + 6 + k * 12, 6, 6);
+    patternRect(T.face, x, y, w, h, ax, ay);
+    patternRect(T.top, x, y, w, Math.min(h, 5 * PX), ax, y);
+    R(x, y + h - PX, w, PX, 'rgba(0,0,0,0.35)');
+    if (b.link) {   // linked to a button of the same colour: a column of gems
+      for (let k = 0; k * 12 < h - 8; k++) { R(x + w / 2 - 4, y + 6 + k * 12, 8, 6, '#0c080c'); R(x + w / 2 - 2, y + 6 + k * 12, 4, 6, b.link); R(x + w / 2 - 4, y + 8 + k * 12, 8, 2, b.link); }
     }
     ctx.globalAlpha = 1;
-    if (b.flash > 0) { ctx.globalAlpha = b.flash / 0.4; ctx.fillStyle = C.portal; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
+    if (b.flash > 0) { ctx.globalAlpha = b.flash / 0.4; R(x, y, w, h, C.portal); ctx.globalAlpha = 1; }
   }
 
   function drawLadder(l) {
     const x = l.x * TILE, y = l.y * TILE, w = l.w * TILE, h = l.h * TILE;
-    ctx.fillStyle = C.crate;
-    ctx.fillRect(x + 3, y, 4, h); ctx.fillRect(x + w - 7, y, 4, h);
-    for (let k = 6; k < h; k += 12) ctx.fillRect(x + 3, y + k, w - 6, 3);
+    R(x + 4, y, 4, h, '#6e4a2a'); R(x + w - 8, y, 4, h, '#6e4a2a');
+    for (let k = 6; k < h; k += 12) { R(x + 4, y + k, w - 8, 4, '#8a5a2b'); R(x + 4, y + k, w - 8, PX, '#a8754f'); }
   }
 
   function drawSpike(s) {
     if (s.out <= 0.01) return;
-    const hgt = 0.62 * TILE * s.out;
-    ctx.fillStyle = C.spike;
-    ctx.beginPath();
-    // spread whole triangles over the exact width, so fractional rows don't spill into their neighbours
-    const n = Math.max(1, Math.round(s.w)), tw = (s.w / n) * TILE;
+    const hgt = Math.max(1, Math.round((0.62 * TILE * s.out) / PX));   // in art pixels
+    // whole triangles spread over the exact width, so fractional rows don't spill into their neighbours
+    const n = Math.max(1, Math.round(s.w)), tw = (s.w / n) * TILE, up = s.dir === 'up';
     for (let i = 0; i < n; i++) {
-      const x0 = s.x * TILE + i * tw, y0 = s.y * TILE;
-      if (s.dir === 'up') { ctx.moveTo(x0 + 2, y0); ctx.lineTo(x0 + tw / 2, y0 - hgt); ctx.lineTo(x0 + tw - 2, y0); }
-      else { ctx.moveTo(x0 + 2, y0); ctx.lineTo(x0 + tw / 2, y0 + hgt); ctx.lineTo(x0 + tw - 2, y0); }
+      const x0 = sn(s.x * TILE + i * tw), x1 = sn(s.x * TILE + (i + 1) * tw), mid = sn((x0 + x1) / 2), half = (x1 - x0) / 2 - PX, y0 = sn(s.y * TILE);
+      for (let j = 0; j < hgt; j++) {
+        const hw = sn((half * (j + 1)) / hgt), yy = up ? y0 - (hgt - j) * PX : y0 + (hgt - j - 1) * PX;
+        R(mid - hw, yy, hw, PX, '#f4ecd8'); R(mid, yy, PX, PX, C.spike); R(mid + PX, yy, hw, PX, '#9a8c70');
+      }
+      R(x0 + PX, up ? y0 - PX : y0, x1 - x0 - 2 * PX, PX, '#5a5048');
     }
-    ctx.fill();
   }
 
-  function drawDoor(d, t) {
-    const cx = (d.x + d.w / 2) * TILE, cy = (d.y + d.h / 2) * TILE, rx = (d.w / 2) * TILE, ry = (d.h / 2) * TILE;
-    ctx.save();
-    ctx.shadowColor = C.portal; ctx.shadowBlur = 18;
-    ctx.fillStyle = '#0a2e3a';
-    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = C.portal; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
-    for (let i = 1; i <= 3; i++) {
-      const k = 1 - i * 0.24;
-      ctx.globalAlpha = 0.25 + 0.2 * i;
-      ctx.setLineDash([6, 7]); ctx.lineDashOffset = (t * 30 * (i % 2 ? 1 : -1));
-      ctx.beginPath(); ctx.ellipse(cx, cy, rx * k, ry * k, 0, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.restore();
+  function drawDoor(d, t, L) {
+    // real and fake portals are the same sprite: that's the joke
+    drawFx(areaOf(L.idx) === 3 ? 'portal-hot' : 'portal', t, (d.x + d.w / 2) * TILE, (d.y + d.h) * TILE + 2);
   }
 
+  // saws: pre-painted frames per radius, 8 steps through one tooth
+  const SAWS = {};
+  function sawArt(rpx, step) {
+    const key = rpx + ':' + step;
+    if (SAWS[key]) return SAWS[key];
+    const S = 2 * (rpx + 4);
+    return (SAWS[key] = paint(S, S, (c) => {
+      const cx = S / 2, rot = (step / 8) * ((Math.PI * 2) / 10);
+      for (let y = -rpx - 3; y <= rpx + 3; y++) for (let x = -rpx - 3; x <= rpx + 3; x++) {
+        const d = Math.hypot(x, y), a = Math.atan2(y, x) + rot, f = (((a / (Math.PI * 2)) * 10) % 1 + 1) % 1, tooth = rpx + (f < 0.5 ? 3 * (1 - f * 2) : 0);
+        if (d <= tooth) c.px(cx + x, cx + y, d > rpx - 1 ? '#d8b088' : x + y < 0 ? '#a8754f' : '#6e4a36');
+      }
+      c.disc(cx, cx, Math.max(1, Math.round(rpx * 0.3)), '#2a1a14'); c.px(cx - 1, cx - 1, '#c83a2a');
+    }));
+  }
   function drawSaw(s) {
-    const cx = s.x * TILE, cy = s.y * TILE, r = s.r * TILE;
-    ctx.save(); ctx.translate(cx, cy); ctx.rotate(s.rot);
-    ctx.fillStyle = C.saw; ctx.beginPath();
-    const teeth = 12;
-    for (let i = 0; i < teeth * 2; i++) {
-      const a = (i / (teeth * 2)) * Math.PI * 2, rr = i % 2 ? r * 0.78 : r;
-      ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
-    }
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = C.danger; ctx.beginPath(); ctx.arc(0, 0, r * 0.3, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+    const rpx = Math.max(3, Math.round((s.r * TILE) / PX)), step = ((Math.floor((s.rot / ((Math.PI * 2) / 10)) * 8) % 8) + 8) % 8;
+    const art = sawArt(rpx, step);
+    ctx.drawImage(art, sn(s.x * TILE) - art.width, sn(s.y * TILE) - art.height, art.width * PX, art.height * PX);
   }
 
   function drawLaser(l, t) {
     const x = l.x * TILE, y = l.y * TILE, w = l.w * TILE, h = l.h * TILE, vert = l.h >= l.w;
-    ctx.save();
     if (l.live) {
-      ctx.shadowColor = C.danger; ctx.shadowBlur = 16;
-      ctx.fillStyle = C.danger; ctx.fillRect(x, y, w, h);
-      ctx.shadowBlur = 0; ctx.fillStyle = '#ffd6dd';
-      if (vert) ctx.fillRect(x + w / 2 - 1.5, y, 3, h); else ctx.fillRect(x, y + h / 2 - 1.5, w, 3);
+      ctx.globalAlpha = 0.35; R(x - (vert ? 2 : 0), y - (vert ? 0 : 2), w + (vert ? 4 : 0), h + (vert ? 0 : 4), C.danger); ctx.globalAlpha = 1;
+      R(x, y, w, h, C.danger);
+      if (vert) R(x + w / 2 - 1, y, PX, h, '#ffd6dd'); else R(x, y + h / 2 - 1, w, PX, '#ffd6dd');
     } else {
-      ctx.globalAlpha = l.warn ? 0.4 + 0.4 * Math.sin(t * 60) : 0.18;
-      ctx.fillStyle = C.danger;
-      if (vert) ctx.fillRect(x + w / 2 - 1, y, 2, h); else ctx.fillRect(x, y + h / 2 - 1, w, 2);
+      ctx.globalAlpha = l.warn ? (Math.sin(t * 60) > 0 ? 0.9 : 0.3) : 0.25;
+      if (vert) for (let j = 0; j < h; j += 6) R(x + w / 2 - 1, y + j, PX, PX, C.danger);
+      else for (let j = 0; j < w; j += 6) R(x + j, y + h / 2 - 1, PX, PX, C.danger);
+      ctx.globalAlpha = 1;
     }
-    ctx.restore();
     // emitters at both ends
-    ctx.fillStyle = C.blockEdge;
-    if (vert) { ctx.fillRect(x - 4, y, w + 8, 5); ctx.fillRect(x - 4, y + h - 5, w + 8, 5); }
-    else { ctx.fillRect(x, y - 4, 5, h + 8); ctx.fillRect(x + w - 5, y - 4, 5, h + 8); }
+    if (vert) { R(x - 4, y, w + 8, 6, '#4a4352'); R(x - 4, y + h - 6, w + 8, 6, '#4a4352'); R(x + w / 2 - 1, y + 2, PX, PX, C.danger); }
+    else { R(x, y - 4, 6, h + 8, '#4a4352'); R(x + w - 6, y - 4, 6, h + 8, '#4a4352'); R(x + 2, y + h / 2 - 1, PX, PX, C.danger); }
   }
 
   function drawPad(pd, t) {
-    const b = padBox(pd), x = b.x * TILE, y = b.y * TILE, w = b.w * TILE, h = b.h * TILE;
-    ctx.save(); ctx.shadowColor = C.pad; ctx.shadowBlur = 12 + Math.sin(t * 5) * 5;
-    ctx.fillStyle = C.pad; ctx.fillRect(x, y, w, h); ctx.restore();
-    ctx.fillStyle = C.pad; ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 5);
-    const n = Math.round(pd.w * 2);
-    for (let i = 0; i < n; i++) {
-      const ax = x + (i + 0.5) * (w / n), up = pd.g < 0, ay = up ? y - 8 - ((t * 20) % 10) : y + h + 8 + ((t * 20) % 10);
-      ctx.beginPath(); ctx.moveTo(ax - 5, ay + (up ? 5 : -5)); ctx.lineTo(ax, ay); ctx.lineTo(ax + 5, ay + (up ? 5 : -5)); ctx.fill();
+    const b = padBox(pd), x = b.x * TILE, y = b.y * TILE, w = b.w * TILE, h = b.h * TILE, up = pd.g < 0;
+    R(x, y, w, h, '#2a2430'); R(x + 2, up ? y : y + h - 4, w - 4, 4, C.pad);
+    const n = Math.round(pd.w * 2), on = Math.sin(t * 5) > 0;
+    for (let i = 0; i < n; i++) {   // chevrons that climb away from the pad
+      const ax = x + (i + 0.5) * (w / n), k = Math.floor((t * 6) % 3), ay = up ? y - 6 - k * 6 : y + h + 6 + k * 6;
+      ctx.globalAlpha = on ? 0.9 : 0.6;
+      R(ax - 1, ay, PX, PX, '#c684ff'); R(ax - 3, ay + (up ? 2 : -2), PX, PX, '#c684ff'); R(ax + 1, ay + (up ? 2 : -2), PX, PX, '#c684ff');
     }
     ctx.globalAlpha = 1;
   }
 
   function drawFlag(f, t) {
     const x = (f.x + 0.45) * TILE, top = f.y * TILE, bot = (f.y + f.h) * TILE;
-    ctx.fillStyle = C.blockEdge; ctx.fillRect(x, top, 3, bot - top);
-    const col = f.evil ? C.danger : C.flag, wave = Math.sin(t * 6) * 3;
-    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x + 3, top); ctx.lineTo(x + 30, top + 8 + wave); ctx.lineTo(x + 3, top + 17); ctx.fill();
+    R(x, top, 4, bot - top, '#6b6b78');
+    const col = f.evil ? C.danger : C.flag, wave = Math.sin(t * 6) > 0 ? 2 : 0;
+    for (let j = 0; j < 9; j++) R(x + 4, top + j * PX + (j > 4 ? wave : 0), (11 - Math.abs(j - 4) * 2) * PX, PX, col);
+    if (f.evil) { R(x + 8, top + 6, PX, PX, '#000'); R(x + 12, top + 6, PX, PX, '#000'); }
   }
 
+  // the knight: a small helmeted blob drawn to its hitbox (0.8 x 0.9 tiles = 12 x 13 art pixels)
   function drawPlayer(p, L) {
     if (p.dead || p.done) return;
-    const cx = (p.x + p.w / 2) * TILE, base = L.g > 0 ? (p.y + p.h) * TILE : p.y * TILE;
-    const w = P.w * TILE * p.sx, h = P.h * TILE * p.sy, k = p.w / P.w;   // k < 1: shrunk player
+    const k = p.w / P.w;   // k < 1: shrunk player
+    const cx = sn((p.x + p.w / 2) * TILE), base = sn(L.g > 0 ? (p.y + p.h) * TILE : p.y * TILE);
+    const skin = SKINS[p.idx || 0], o = '#0c080c';
+    const w = Math.max(6, Math.round(12 * (p.sx || 1))), h = Math.max(6, Math.round(13 * (p.sy || 1)));
     ctx.save();
     ctx.translate(cx, base);
     ctx.scale(k, L.g < 0 ? -k : k);
-    const skin = SKINS[p.idx || 0];
-    ctx.fillStyle = skin.dark; roundRect(-w / 2, -h, w, h, 5); ctx.fill();
-    ctx.fillStyle = skin.main; roundRect(-w / 2 + 1.5, -h + 1.5, w - 3, h - 5, 4); ctx.fill();
-    // eyes
-    const look = p.face * 2.5, ey = -h * 0.62;
-    for (const ex of [-5, 5]) {
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(ex + look * 0.6, ey, 3.6, 4.4, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = C.eye; ctx.beginPath(); ctx.arc(ex + look, ey + (L.invert ? -1 : 0.8), 1.9, 0, Math.PI * 2); ctx.fill();
+    const l = -Math.round(w / 2), t = -h;
+    r(l - 1, t - 1, w + 2, h + 1, o);
+    r(l, t, w, h, skin.dark); r(l, t, w, h - 3, skin.main); r(l + 1, t + 4, 1, Math.max(1, h - 8), skin.hi);
+    r(l, t, w, 4, '#8a8494'); r(l, t, w, 1, '#c8c4d0');                       // helmet
+    r(l + 2, t - 2, w - 4, 2, skin.plume); r(l + 3, t - 3, w - 6, 1, skin.plume);  // crest
+    const look = p.face < 0 ? -1 : p.face > 0 ? 1 : 0, ey = t + 5, py = L.invert ? 0 : 1;
+    for (const ex of [2, w - 5]) { r(l + ex, ey, 3, 3, '#ffffff'); r(l + ex + 1 + Math.max(0, look) - (look < 0 ? 1 : 0), ey + py, 2, 2, o); }
+    // feet while running
+    if (L.t !== undefined && p.grounded && Math.abs(p.vx) > 1) {
+      const s = Math.floor(L.t * 10) % 2;
+      r(l + 1 + s * 2, 0, 3, 1, o); r(l + w - 4 - s * 2, 0, 3, 1, o);
     }
     ctx.restore();
   }
@@ -1089,13 +1240,11 @@
     if (a.dead || b.dead) return;
     const ax = (a.x + a.w / 2) * TILE, ay = (a.y + a.h / 2) * TILE, bx = (b.x + b.w / 2) * TILE, by = (b.y + b.h / 2) * TILE;
     const d = Math.hypot(bx - ax, by - ay) / TILE, sag = Math.max(0, L.rope - d) * 0.55 * TILE * L.g;
-    const mx = (ax + bx) / 2, my = (ay + by) / 2 + sag;
-    const n = 16;
+    const mx = (ax + bx) / 2, my = (ay + by) / 2 + sag, n = 18;
     for (let i = 0; i <= n; i++) {
       const t = i / n, u = 1 - t;
       const x = u * u * ax + 2 * u * t * mx + t * t * bx, y = u * u * ay + 2 * u * t * my + t * t * by;
-      ctx.strokeStyle = a.taut ? C.danger : C.saw; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.ellipse(x, y, 3.2, 2.2, Math.atan2(by - ay, bx - ax) + (i % 2 ? Math.PI / 2 : 0), 0, Math.PI * 2); ctx.stroke();
+      R(x - 2, y - 2, 4, 4, a.taut ? C.danger : i % 2 ? '#6b6b78' : '#9a9aa8');
     }
   }
 
@@ -1104,22 +1253,36 @@
     if (p.dead) return;
     const x = (p.x + p.w / 2) * TILE, y = (L.g > 0 ? p.y - 0.9 : p.y + p.h + 0.9) * TILE - Math.min(b.t, 0.3) * 20 * L.g;
     ctx.globalAlpha = clamp((1.4 - b.t) / 0.3, 0, 1);
-    ctx.font = `bold 14px ${FONT}`;
-    const w = ctx.measureText(b.str).width + 14;
-    ctx.fillStyle = 'rgba(232,230,240,0.95)'; roundRect(x - w / 2, y - 12, w, 24, 6); ctx.fill();
-    text(b.str, x, y + 1, 14, C.bg1);
+    ctx.font = `32px ${FONT}`;
+    const w = sn(ctx.measureText(b.str).width + 16), bx = sn(x - w / 2), by = sn(y - 12);
+    R(bx, by, w, 24, '#d8ccb0'); R(bx + PX, by - PX, w - 2 * PX, PX, '#d8ccb0'); R(bx + PX, by + 24, w - 2 * PX, PX, '#d8ccb0'); R(sn(x), by + 26, PX, PX, '#d8ccb0');
+    text(b.str, x, y, 14, '#1a1410');
     ctx.globalAlpha = 1;
   }
 
+  // darkness: a dithered circle of light around the player, painted once per radius
+  const DARK = {};
+  function darkArt(rpx) {
+    if (DARK[rpx]) return DARK[rpx];
+    const S = rpx * 2 + 2;
+    return (DARK[rpx] = paint(S, S, (c) => {
+      for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+        const f = (Math.hypot(x - S / 2, y - S / 2) - rpx * 0.55) / (rpx * 0.45);
+        if (f > dith(x, y)) c.px(x, y, '#05050e');
+      }
+    }));
+  }
+
   function drawLevel(L) {
-    const t = L.t;
+    const t = L.t, n = areaOf(L.idx);
     ctx.save();
-    if (L.shakeT > 0) ctx.translate((Math.random() - 0.5) * L.shakeMag * TILE, (Math.random() - 0.5) * L.shakeMag * TILE);
+    if (L.shakeT > 0) ctx.translate(sn((Math.random() - 0.5) * L.shakeMag * TILE), sn((Math.random() - 0.5) * L.shakeMag * TILE));
     if (L.view.mirror) { ctx.translate(VW, 0); ctx.scale(-1, 1); }
     if (L.view.flip) { ctx.translate(0, VH); ctx.scale(1, -1); }
-    drawBg();
+    drawBg(n);
+    drawDecor(n, t);
     for (const f of L.flags) drawFlag(f, t);
-    for (const d of L.doors) drawDoor(d, t);
+    for (const d of L.doors) drawDoor(d, t, L);
     for (const s of L.spikes) drawSpike(s);
     for (const l of L.ladders) drawLadder(l);
     for (const s of L.saws) if (s.buried) drawSaw(s);   // drawn under blocks: only the exposed half shows
@@ -1128,65 +1291,120 @@
     for (const bt of L.buttons) drawButton(bt);
     for (const s of L.saws) if (!s.buried) drawSaw(s);
     for (const l of L.lasers) drawLaser(l, t);
-    // draw level text above blocks with a dark outline so gates/ceilings never cut it off
-    ctx.save(); ctx.font = `normal 18px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.strokeStyle = 'rgba(20,20,43,0.78)'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.fillStyle = 'rgba(232,230,240,0.52)';
-    for (const tx of L.texts) { ctx.strokeText(tx.str, tx.x * TILE, tx.y * TILE); ctx.fillText(tx.str, tx.x * TILE, tx.y * TILE); }
-    ctx.restore();
+    // level text sits above blocks with a dark outline so gates/ceilings never cut it off
+    for (const tx of L.texts) text(tx.str, tx.x * TILE, tx.y * TILE, 18, AREAS[n].text, 'left', null, '#0a080c');
     if (L.chained) drawChain(L);
     for (const p of L.players) drawPlayer(p, L);
+    for (const f of fxs) drawFx(f.name, f.t, f.x, f.y);
     for (const p of particles) {
-      ctx.globalAlpha = clamp(1 - p.t / p.life, 0, 1); ctx.fillStyle = p.color;
-      ctx.fillRect(p.x * TILE, p.y * TILE, p.size * TILE, p.size * TILE);
+      ctx.globalAlpha = clamp(1 - p.t / p.life, 0, 1);
+      R(p.x * TILE, p.y * TILE, Math.max(PX, p.size * TILE), Math.max(PX, p.size * TILE), p.color);
     }
     ctx.globalAlpha = 1;
-    // darkness: everything outside a soft circle of light around the player is hidden
     if (L.dark) {
-      const p = L.cur, cx = (p.x + p.w / 2) * TILE, cy = (p.y + p.h / 2) * TILE, r = L.dark * TILE;
-      const g = ctx.createRadialGradient(cx, cy, r * 0.55, cx, cy, r);
-      g.addColorStop(0, 'rgba(5,5,14,0)'); g.addColorStop(1, 'rgb(5,5,14)');
-      ctx.fillStyle = g; ctx.fillRect(-TILE, -TILE, VW + 2 * TILE, VH + 2 * TILE);
+      const p = L.cur, cx = sn((p.x + p.w / 2) * TILE), cy = sn((p.y + p.h / 2) * TILE), rpx = Math.round((L.dark * TILE) / PX), art = darkArt(rpx);
+      const x0 = cx - art.width, y0 = cy - art.height, x1 = x0 + art.width * PX, y1 = y0 + art.height * PX;
+      ctx.drawImage(art, x0, y0, art.width * PX, art.height * PX);
+      ctx.fillStyle = '#05050e';
+      ctx.fillRect(-VW, -VH, VW * 3, y0 + VH); ctx.fillRect(-VW, y1, VW * 3, VH * 2);
+      ctx.fillRect(-VW, y0, x0 + VW, y1 - y0); ctx.fillRect(x1, y0, VW * 2, y1 - y0);
     }
     for (const b of L.bubbles) drawBubble(b, L);
     ctx.restore();
 
     // HUD
-    ctx.fillStyle = 'rgba(13,12,29,0.82)'; ctx.fillRect(0, 0, VW, 34);
-    text(`${String(L.idx + 1).padStart(2, '0')} / ${course(L.mode.id).length}  ${L.def.name.toUpperCase()}`, 14, 18, 15, C.text, 'left');
+    const two = L.mode.players > 1, barH = two ? 56 : 30;
+    ctx.fillStyle = 'rgba(10,8,12,0.85)'; ctx.fillRect(0, 0, VW, barH);
+    text(`${String(L.idx + 1).padStart(2, '0')}/${course(L.mode.id).length}  ${L.def.name.toUpperCase()}`, 10, 14, 15, C.text, 'left');
     const ld = save.levelDeaths[dkey(L.mode.id, L.idx)] || 0;
-    text(`deaths here ${ld}   total ${save.deaths}`, VW - 14, 18, 15, C.danger, 'right');
-    if (L.mode.players > 1) {
+    text(`deaths ${ld}  total ${save.deaths}`, VW - 10, 14, 15, C.danger, 'right');
+    if (two) {
       const sh = save.shame[L.mode.id];
-      text(`${L.mode.label || L.mode.name}   strikes ${'✕'.repeat(game.strikes)}${'·'.repeat(Math.max(0, STRIKES - game.strikes))}`, VW / 2, 14, 12, C.portal);
-      text(`shame: PINK ${sh[0]} · BLUE ${sh[1]}`, VW / 2, 28, 11, C.text, 'center', 'normal');
+      text(`strikes ${'×'.repeat(game.strikes)}${'·'.repeat(Math.max(0, STRIKES - game.strikes))}`, 10, 42, 12, C.portal, 'left');
+      text(`shame: RED ${sh[0]} · BLUE ${sh[1]}`, VW - 10, 42, 11, C.text, 'right');
     }
     // persistent red/green light indicator with 0.45s yellow pre-change warning
     if (L.light) {
       const warn = L.lightEnds && L.lightEnds - L.t < 0.45;
-      const col = warn ? C.spike : L.light === 'green' ? C.flag : C.danger;
-      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(VW / 2 - 74, 52, 7, 0, Math.PI * 2); ctx.fill();
-      text(warn ? 'CHANGE!' : `${L.light.toUpperCase()} · ${L.light === L.go ? 'MOVE' : 'FREEZE'}`, VW / 2 + 12, 52, 15, col);
+      const col = warn ? C.spike : L.light === 'green' ? C.flag : C.danger, ly = barH + 22;
+      const w = text(warn ? 'CHANGE!' : `${L.light.toUpperCase()} · ${L.light === L.go ? 'MOVE' : 'FREEZE'}`, VW / 2 + 12, ly, 15, col);
+      // a shape as well as a colour: square = go, cross = freeze
+      const ix = sn(VW / 2 + 12 - w / 2 - 26);
+      if (warn || L.light !== L.go) { for (let k = 0; k < 6; k++) { R(ix + k * PX * 2, ly - 6 + k * PX * 2, 4, 4, col); R(ix + 10 * PX - k * PX * 2 - 4, ly - 6 + k * PX * 2, 4, 4, col); } }
+      else R(ix, ly - 8, 16, 16, col);
     }
 
     if (L.banner) {
       let k = Math.min(1, L.banner.t * 6);
       if (L.banner.life) k = Math.min(k, clamp((L.banner.life - L.banner.t) / 0.3, 0, 1));
-      ctx.fillStyle = `rgba(13,12,29,${0.6 * k})`; ctx.fillRect(0, VH / 2 - 60, VW, 120);
-      text(L.banner.text, VW / 2, VH / 2 - 10, 54 * (0.6 + 0.4 * k), L.banner.color || C.portal);
-      if (L.banner.sub) text(L.banner.sub, VW / 2, VH / 2 + 34, 16, C.text, 'center', 'normal');
+      ctx.fillStyle = `rgba(10,8,12,${0.7 * k})`; ctx.fillRect(0, VH / 2 - 60, VW, 120);
+      ctx.globalAlpha = k;
+      text(L.banner.text, VW / 2, VH / 2 - 12, 54, L.banner.color || C.portal, 'center', null, '#2a0a0a');
+      if (L.banner.sub) text(L.banner.sub, VW / 2, VH / 2 + 30, 16, C.text);
+      ctx.globalAlpha = 1;
     }
     if (game.message) {
       const m = game.message, a = clamp((1.6 - m.t) / 0.3, 0, 1);
-      ctx.globalAlpha = a; text(m.text, VW / 2, 80, 26, C.danger); ctx.globalAlpha = 1;
+      ctx.globalAlpha = a; text(m.text, VW / 2, barH + 60, 26, C.danger, 'center', null, '#0a080c'); ctx.globalAlpha = 1;
     }
-    ctx.fillStyle = 'rgba(13,12,29,0.72)'; ctx.fillRect(0, VH - 22, VW, 22);
-    const hint = padCount ? 'Stick/D-pad move · A/X jump · Y/Select restart · Start levels' : `${L.mode.hint} · R restart · ESC levels · M mute`;
-    text(hint, VW / 2, VH - 11, 12, 'rgba(232,230,240,0.68)', 'center', 'normal');
+    ctx.fillStyle = 'rgba(10,8,12,0.8)'; ctx.fillRect(0, VH - 28, VW, 28);
+    const hint = padCount ? 'stick move · A jump · Y restart · start levels' : `${two ? 'P1 A D W · P2 ← → ↑' : '← → move · space jump'} · R restart · esc levels · M mute`;
+    text(hint, VW / 2, VH - 14, 12, 'rgba(232,220,192,0.7)');
     const tags = [admin.unlock && 'N skip', admin.god && 'GOD', admin.speed !== 1 && `${admin.speed}x`].filter(Boolean);
-    if (tags.length) text(`ADMIN: ${tags.join(' · ')}`, 14, VH - 11, 12, C.danger, 'left');
+    if (tags.length) text(`ADMIN: ${tags.join(' · ')}`, VW - 10, barH + 16, 12, C.danger, 'right');
   }
 
+  // ---------------------------------------------------------------- cutscenes (js/cutscenes.js; skipped without WebGL)
+  const CUT = window.Cutscenes && window.Cutscenes.ok ? window.Cutscenes : null;
+  const SKIP = { x: VW - 150, y: 6, w: 140, h: 30 };
+  function playCut(id, then) {
+    if (!CUT) return then();
+    const m = MODE[game.mode];
+    let s;
+    try { s = CUT.make(id, { players: m.players, chained: !!m.chained, skins: SKINS, areas: AREAS, deaths: save.deaths, sfx }); }
+    catch (e) { console.error(e); return then(); }
+    game.cut = { s, t: 0, then }; game.state = 'cutscene'; game.clearInput(); particles = []; fxs = [];
+  }
+  function endCut() {
+    const c = game.cut; if (!c) return;
+    game.cut = null; CUT.end(c.s); c.then();
+  }
+  // what a scene can draw over its 3D frame
+  const cutUI = {
+    bars() { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VW, 42); ctx.fillRect(0, VH - 56, VW, 56); },
+    caption(t, a, b, str) {
+      if (t < a || t > b) return;
+      ctx.globalAlpha = Math.min(1, (t - a) / 0.3, (b - t) / 0.3); text(str, VW / 2, VH - 28, 16, C.text); ctx.globalAlpha = 1;
+    },
+    label(str, k) { ctx.globalAlpha = clamp(k * 1.6, 0, 1); text(str, VW / 2, 84, 54, C.portal, 'center', null, '#2a0a0a'); ctx.globalAlpha = 1; },
+    shout(str) { text(str, VW / 2 + sn((Math.random() - 0.5) * 8), VH / 2 - 60, 80, C.danger, 'center', null, '#000'); },
+    fadeOut(t, a, b) { if (t > a) { ctx.fillStyle = `rgba(0,0,0,${clamp((t - a) / (b - a), 0, 1)})`; ctx.fillRect(0, 0, VW, VH); } },
+    card(t, title, sub, color) {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VW, VH);
+      ctx.globalAlpha = clamp(t / 0.4, 0, 1);
+      text(title, VW / 2, VH / 2 - 20, 54, color || C.portal, 'center', null, '#2a0a0a');
+      text(sub, VW / 2, VH / 2 + 30, 16, C.text);
+      ctx.globalAlpha = 1;
+    },
+  };
+  function drawCut(c) {
+    if (!c) return;
+    let img;
+    try { img = CUT.render(c.s, c.t); } catch (e) { console.error(e); endCut(); return; }
+    ctx.drawImage(img, 0, 0, VW, VH);
+    c.s.overlay(c.t, cutUI);
+    // the skip button, top right, always there
+    R(SKIP.x, SKIP.y, SKIP.w, SKIP.h, '#2a2430'); R(SKIP.x, SKIP.y, SKIP.w, PX, '#6d6578');
+    text('SKIP >>', SKIP.x + SKIP.w / 2, SKIP.y + SKIP.h / 2, 14, c.t > 0.5 ? C.text : C.dim);
+  }
+
+  let titleScene = null;
   function drawTitle(t) {
+    if (CUT) {
+      try { titleScene = titleScene || CUT.make('title', {}); ctx.drawImage(CUT.render(titleScene, t), 0, 0, VW, VH); }
+      catch (e) { console.error(e); }
+      return drawTitleText(t);
+    }
     drawBg();
     // a little demo: the hero keeps getting got
     const cycle = t % 3.2, floorY = 10.5 * TILE;
@@ -1201,13 +1419,16 @@
     }
     ctx.fillStyle = C.bg1; if (gone) ctx.fillRect(18 * TILE, floorY, 2 * TILE, TILE);
 
-    text('MASTER BAITER', VW / 2, 150, 80, C.player);
-    text('a platformer that does not like you', VW / 2, 215, 18, C.text, 'center', 'normal');
+    drawTitleText(t);
+  }
+  function drawTitleText(t) {
+    text('MASTER BAITER', VW / 2, 62, 80, C.player, 'center', null, '#1a0408');
+    text('a platformer that does not like you', VW / 2, 112, 18, C.text, 'center', null, '#0a080c');
     const blink = Math.sin(t * 4) > -0.3;
-    if (blink) text('press SPACE / tap to play', VW / 2, VH * 0.74, 22, C.portal);
-    text(`deaths so far: ${save.deaths}`, VW / 2, VH * 0.82, 16, C.danger);
-    text(save.muted ? 'sound off (M)' : 'sound on (M)', VW / 2, VH - 20, 12, C.dim, 'center', 'normal');
-    text('` admin', VW - 14, VH - 20, 12, C.dim, 'right', 'normal');
+    if (blink) text('press SPACE / tap to play', VW / 2, VH * 0.74, 22, C.portal, 'center', null, '#0a080c');
+    text(`deaths so far: ${save.deaths}`, VW / 2, VH * 0.82, 16, C.danger, 'center', null, '#0a080c');
+    text(save.muted ? 'sound off (M)' : 'sound on (M)', VW / 2, VH - 20, 12, C.dim, 'center', null, '#0a080c');
+    text('` admin', VW - 14, VH - 20, 12, C.dim, 'right', null, '#0a080c');
   }
 
   function drawAdmin() {
@@ -1288,7 +1509,8 @@
       ctx.strokeStyle = on ? C.player : open ? C.blockEdge : 'rgba(232,230,240,0.15)'; ctx.lineWidth = on ? 3 : 1.5; ctx.stroke();
       text(open ? String(i + 1) : '?', r.x + r.w / 2, r.y + 32, 30, open ? C.text : C.dim);
       const d = save.levelDeaths[dkey(game.mode, i)] || 0;
-      text(open ? `☠ ${d}` : 'locked', r.x + r.w / 2, r.y + 65, 13, open ? C.danger : C.dim, 'center', 'normal');
+      if (open) { const w = text(String(d), r.x + r.w / 2 + 10, r.y + 65, 13, C.danger); skullIcon(r.x + r.w / 2 + 10 - w / 2 - 20, r.y + 55, C.danger); }
+      else text('locked', r.x + r.w / 2, r.y + 65, 13, C.dim);
     }
     ctx.restore();
 
@@ -1316,7 +1538,7 @@
     if (s) text(s.name, VW / 2, VH - 50, 22, C.portal);
   }
 
-  const MCARD = { w: 270, h: 260, gap: 30, top: 140 };
+  const MCARD = { w: 300, h: 260, gap: 10, top: 140 };
   function modeRect(i) {
     const x0 = (VW - (MODES.length * MCARD.w + (MODES.length - 1) * MCARD.gap)) / 2;
     return { x: x0 + i * (MCARD.w + MCARD.gap), y: MCARD.top, w: MCARD.w, h: MCARD.h };
@@ -1390,7 +1612,9 @@
       while (acc >= STEP) { game.level.step(STEP); acc -= STEP; }
     }
     updateParticles(dt);
+    updateFx(dt);
     if (game.message) { game.message.t += dt; if (game.message.t > 1.6) game.message = null; }
+    if (game.state === 'cutscene' && game.cut) { game.cut.t += dt; if (game.cut.t >= game.cut.s.dur) endCut(); }
 
     baseTransform();
     if (game.state === 'title') drawTitle(game.time);
@@ -1398,6 +1622,7 @@
     else if (game.state === 'select') drawSelect(game.time);
     else if (game.state === 'admin') drawAdmin();
     else if (game.state === 'play') drawLevel(game.level);
+    else if (game.state === 'cutscene') drawCut(game.cut);
     else drawEnd(game.time);
     requestAnimationFrame(frame);
   }
@@ -1405,7 +1630,7 @@
 
   // deterministic hooks for automated tests (no effect on normal play)
   window.__ragebait = {
-    game, save, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed, pollPads,
+    game, save, playCut, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed, pollPads,
     load(i, mode = 'single') { game.setMode(mode); game.start(i); },
     step(n = 1) { for (let i = 0; i < n; i++) game.level.step(STEP); },
     STEP,

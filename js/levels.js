@@ -194,6 +194,39 @@ function undoingC(L) {
   go(0);
 }
 
+// hidden spike row that pops once cond() holds
+function trap(L, x, y, w, cond, dir = 'up') { const s = L.spike(x, y, w, dir, { hidden: true }); L.on(cond, () => s.pop()); return s; }
+
+// slide block b to (x2, y2) and back forever, resting `pause` s at each end
+function ferry(L, b, x2, y2, speed, pause = 0) {
+  const a = [b.x, b.y], z = [x2, y2];
+  let to = z, waiting = false;
+  const go = () => { waiting = false; L.moveBlock(b, to[0], to[1], speed); };
+  go();
+  L.on(() => !waiting && b.x === to[0] && b.y === to[1], () => { waiting = true; to = to === z ? a : z; L.wait(pause, go); }, { repeat: true });
+}
+
+// after a dropped landing crusher lands, lift it back to y0 so baiting never softlocks
+function retract(L, b, y0 = 0) {
+  L.on(() => !b.falling && !b.pending && b.y > y0 + 0.1, () => L.wait(0.6, () => L.moveBlock(b, b.x, y0, 6)));
+}
+
+// red light / green light: L.go is the colour you may move on, anyone moving on the other one dies.
+// returns flip(colour) to change the rule (with a fresh grace period)
+function redGreen(L, greens = [2.0, 1.6, 2.2, 1.8], reds = [1.5, 1.8, 1.4, 1.7]) {
+  L.go = 'green';
+  let since = 0, n = 0;
+  const cycle = (c) => {
+    const d = c === 'green' ? greens[n % greens.length] : reds[n++ % reds.length];
+    L.light = c; since = L.t; L.lightEnds = L.t + d;
+    L.banner = { text: c === 'green' ? 'GREEN LIGHT' : 'RED LIGHT', sub: '', t: 0, life: 0.8, color: c === 'green' ? '#5cff8f' : '#ff3b5c' };
+    L.wait(d, () => cycle(c === 'green' ? 'red' : 'green'));
+  };
+  cycle('red');
+  L.on(() => L.light !== L.go && L.t - since > 0.4 && Math.abs(L.player.vx) > 0.5, () => { L.say('I SAW THAT'); L.kill(L.player, 'red light'); }, { repeat: true });
+  return (go) => { L.go = go; since = L.t; };
+}
+
 const SINGLE = [
 
   {
@@ -448,7 +481,7 @@ const SINGLE = [
       L.pad(3, 15, 2, -1);
       L.block(8, 0, 6, 3);
       L.block(8, 13, 6, 5);
-      L.spike(8, 13, 6, 'down');
+      L.spike(8, 13, 6, 'up');
       L.pad(11, 3, 2, 1);
       L.block(16, 15, 6, 3);
       L.block(16, 0, 6, 3);
@@ -496,8 +529,8 @@ const SINGLE = [
       for (let x = 16; x < 26; x++) L.block(x, 15, 1, 1, { crumble: 0.16 });
       L.block(26, 15, 6, 3);
       // spikes below the bridge
-      L.block(4, 17, 22, 1);
-      L.spike(4, 17, 22, 'up');
+      L.block(4, 17, 10, 1); L.block(16, 17, 10, 1);
+      L.spike(4, 17, 10, 'up'); L.spike(16, 17, 10, 'up');
       // crusher with warning telegraph before dropping
       const crusher = L.block(9, 0, 4, 7);
       L.on(() => L.px > 8, () => L.drop(crusher, 0.4, { land: true }));
@@ -514,7 +547,8 @@ const SINGLE = [
     build(L) {
       L.spawn(2, 15);
       L.text(3, 6, 'The flag saves you. Trust the flag.');
-      L.block(0, 15, 32, 3);
+      L.block(0, 15, 10, 3);
+      L.block(22, 15, 10, 3);
       // a "checkpoint" flag that is EVIL
       const f = L.flag(16, 15);
       // big gap that opens up
@@ -553,6 +587,7 @@ const SINGLE = [
       L.on(() => L.px > 6.5, () => L.drop(c1, 0.45, { land: true }));
       L.on(() => L.px > 13.5, () => L.drop(c2, 0.45, { land: true }));
       L.on(() => L.px > 20.5, () => L.drop(c3, 0.45, { land: true }));
+      retract(L, c1); retract(L, c2); retract(L, c3);
       // hidden pop spike between the second and third crusher
       const s = L.spike(18.5, 15, 1, 'up', { hidden: true });
       L.on(() => L.px > 17, () => s.pop());
@@ -596,16 +631,17 @@ const SINGLE = [
       L.text(3, 5, 'Everything. All at once. Final level.');
       L.block(0, 15, 6, 3);
       // gravity flip zone
-      L.block(0, 0, 8, 3);
+      L.block(0, 0, 6, 3);
       L.pad(4, 15, 2, -1);
       L.block(6, 0, 4, 3);
       L.pad(8, 3, 2, 1);
-      // crumble section (slightly more forgiving: 0.1 -> 0.14)
-      for (let x = 10; x < 18; x++) L.block(x, 15, 1, 1, { crumble: 0.14 });
+      // solid landing + crumble section
+      L.block(9, 15, 4, 3);
+      for (let x = 13; x < 18; x++) L.block(x, 15, 1, 1, { crumble: 0.22 });
       L.block(18, 15, 4, 3);
-      // inverted controls only on the crumble stretch, cleared before the crusher
-      L.on(() => L.px > 12, () => { L.invert = true; L.say('and inverted'); });
-      L.on(() => L.px > 17, () => { L.invert = false; L.say('you\'re welcome'); });
+      // inverted controls hit on landing before the crumble stretch, cleared on solid ground after
+      L.on(() => L.px > 10.5, () => { L.invert = true; L.say('and inverted'); });
+      L.on(() => L.px > 18.4, () => { L.invert = false; L.say('you\'re welcome'); });
       // crusher: narrower, telegraphed, single trigger, sits over the island
       const crush = L.block(19, 0, 3, 7);
       let slamAt = -1, slamUntil = -1;
@@ -621,8 +657,8 @@ const SINGLE = [
       L.on(() => L.px > 20, () => { saw2.vx = -7; });
       // single door that runs away to an elevated platform
       const portal = L.door(28, 15);
-      L.block(26, 13, 2.5, 1, { hidden: true });
-      L.block(28.5, 11, 2.5, 1, { hidden: true });
+      L.block(25, 13, 2.5, 1, { hidden: true });
+      L.block(28, 11, 2.5, 1, { hidden: true });
       L.block(29, 9.5, 3, 1);
       L.on(() => L.near(portal, 2.2), () => {
         L.moveDoor(portal, 29.5, 9.5, 14);
@@ -701,13 +737,13 @@ const SINGLE = [
     build(L) {
       L.spawn(1.5, 16);
       L.text(0.4, 2.6, 'Gotta go fast.');
-      // floor 1 (y 12-16), runs right, 5x until x 24
+      // floor 1 (y 12-16), runs right, 3.5x until x 24
       L.block(0, 16, 32, 2);
       L.laser(6.85, 12, 0.3, 4, { on: 0.8, off: 0.8 });
-      L.spike(11, 16, 6, 'up');
+      L.spike(11.5, 16, 4.5, 'up');
       L.laser(22.85, 12, 0.3, 4, { on: 0.8, off: 0.8, phase: 0.4 });
       L.block(28.5, 13.5, 3.5, 0.5);
-      // floor 2 (y 6-11), runs left: normal-speed platforms over spikes, then 5x from x 12 to 4.5
+      // floor 2 (y 6-11), runs left: normal-speed platforms over spikes, then 3.5x from x 12 to 4.5
       L.block(0, 11, 27, 1);
       L.spike(14, 11, 10, 'up');
       L.block(21, 9.5, 1.5, 0.5);
@@ -723,9 +759,9 @@ const SINGLE = [
 
       const fast = () => (L.py > 12 && L.px < 24) || (L.py > 6 && L.py < 11 && L.px > 4.5 && L.px < 12);
       L.on(() => fast() !== (L.speedMul > 1), () => {
-        L.speedMul = fast() ? 5 : 1;
-        L.say(L.speedMul > 1 ? '5x SPEED' : 'normal');
-        L.player.vx = Math.max(-8, Math.min(8, L.player.vx)); // don't keep 5x momentum
+        L.speedMul = fast() ? 3.5 : 1;
+        L.say(L.speedMul > 1 ? '3.5x SPEED' : 'normal');
+        L.player.vx = Math.max(-8, Math.min(8, L.player.vx)); // don't keep 3.5x momentum
       }, { repeat: true });
 
       // corridor spikes rise behind you at just under full run speed
@@ -953,20 +989,8 @@ const SINGLE = [
       L.door(1.2, 5);
 
       // the lights. L.go is the colour you may move on; L.lightEnds is when the current light changes
-      L.go = 'green';
-      const greens = [1.6, 1.3, 2.0, 1.4, 1.8], reds = [1.3, 1.6, 1.2, 1.5];
-      let since = 0, n = 0;
-      const cycle = (c) => {
-        const d = c === 'green' ? greens[n % greens.length] : reds[n++ % reds.length];
-        L.light = c; since = L.t; L.lightEnds = L.t + d;
-        L.banner = { text: c === 'green' ? 'GREEN LIGHT' : 'RED LIGHT', sub: '', t: 0, life: 0.8 };
-        L.wait(d, () => cycle(c === 'green' ? 'red' : 'green'));
-      };
-      cycle('red');
-      L.on(() => L.py < 7.6 && L.px < 27.2, () => { L.go = 'red'; since = L.t; sign.str = 'Move on RED. Freeze on GREEN.'; });
-      L.on(() => L.light !== L.go && L.t - since > 0.3 && Math.abs(L.player.vx) > 0.5, () => {
-        L.say('I SAW THAT'); L.kill(L.player, 'red light');
-      });
+      const setGo = redGreen(L, [1.8, 1.5, 2.0, 1.6], [1.5, 1.8, 1.4, 1.7]);
+      L.on(() => L.py < 7.6 && L.px < 27.2, () => { setGo('red'); sign.str = 'Move on RED. Freeze on GREEN.'; });
       // a half-buried saw that only moves while you're frozen
       const saw = L.saw(20, 15, 0.7, { buried: true });
       let dir = 1;
@@ -1130,179 +1154,217 @@ const SINGLE = [
       const decoy = L.door(29.8, 12.5, { fake: true });
       const decoyTrap = L.spike(28.5, 12.5, 3.5, 'up', { hidden: true });
       L.on(() => L.touch(decoy), () => { decoyTrap.pop(); L.banner = { text: 'FAKE', sub: '', t: 0, life: 1.4 }; });
-      // red light, green light (each light lasts 1.2-2 s)
-      L.go = 'green';
-      const greens = [1.6, 1.3, 2.0, 1.4, 1.8], reds = [1.3, 1.6, 1.2, 1.5];
-      let since = 0, n = 0;
-      const cycle = (c) => {
-        const d = c === 'green' ? greens[n % greens.length] : reds[n++ % reds.length];
-        L.light = c; since = L.t; L.lightEnds = L.t + d;
-        L.banner = { text: c === 'green' ? 'GREEN LIGHT' : 'RED LIGHT', sub: '', t: 0, life: 0.8 };
-        L.wait(d, () => cycle(c === 'green' ? 'red' : 'green'));
-      };
-      cycle('red');
-      L.on(() => L.light !== L.go && L.t - since > 0.3 && Math.abs(L.player.vx) > 0.5, () => { L.say('I SAW THAT'); L.kill(L.player, 'red light'); });
+      // red light, green light (each light lasts 1.3-2 s)
+      redGreen(L, [1.8, 1.5, 2.0, 1.6], [1.4, 1.6, 1.3, 1.5]);
       L.on(() => L.py > 16 && L.px > 26 && L.px < 28.5, () => undoingB(L));
     },
   },
-  // ---------------------------------------------------------------- level 31 (single-player, trap gauntlet)
+  // ---------------------------------------------------------------- levels 31-40 (single-player, finals)
   {
-    // A single spike in the centre of the level, but approaching it triggers a sequence of traps:
-    // 1. A boulder drops from above — dodge it (stop/back up).
-    // 2. A saw rolls in from the left — jump over it.
-    // 3. Jump over the now-safe spike.
-    // 4. Near the portal a final saw sweeps in — jump it to win.
-    name: 'One Spike',
+    // four beams, timed to never line up. halfway the run goes 2.2x.
+    name: 'Laser Tag',
     build(L) {
       L.spawn(2, 15);
-      L.text(5, 6, 'Just one spike. How hard can it be?');
-      L.block(0, 15, 32, 3);  // floor
-
-      // the single spike in the middle
-      L.spike(15, 15, 1, 'up');
-
-      // --- trap 1: boulder drops when you approach the spike ---
-      const boulder = L.block(14, -4, 3, 3);
-      L.on(() => L.px > 11, () => {
-        L.drop(boulder, 0.15, { land: true });
-        L.say('look out!');
-      });
-
-      // --- trap 2: saw rolls in from the left after the boulder lands ---
-      const saw1 = L.saw(-2, 14.2, 0.8);
-      L.on(() => !boulder.falling && boulder.y > 11, () => {
-        L.wait(0.4, () => {
-          saw1.vx = 9;
-          L.say('incoming!');
-        });
-      });
-
-      // --- trap 3: portal and final saw ---
-      L.door(28, 15);
-      const saw2 = L.saw(34, 14.2, 0.8);
-      L.on(() => L.px > 24, () => {
-        saw2.vx = -10;
-        L.say('one more!');
-      });
-    },
-  },
-  // ---------------------------------------------------------------- levels 32-40 (single-player, placeholders)
-  {
-    name: 'Double Trouble',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(3, 6, 'Two gaps. Two jumps. Easy.');
-      L.block(0, 15, 10, 3);
-      L.block(13, 15, 6, 3);
-      L.block(22, 15, 10, 3);
-      const s = L.spike(25, 15, 1, 'up', { hidden: true });
-      L.on(() => L.px > 23.5, () => s.pop());
-      L.door(29, 15);
-    },
-  },
-  {
-    name: 'Spiky Path',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(3, 6, 'Hop the spikes. Don\'t overthink it.');
+      L.text(3, 6, 'Wait for the gaps. Then go.');
       L.block(0, 15, 32, 3);
-      L.spike(8, 15, 1, 'up');
-      L.spike(14, 15, 1, 'up');
-      L.spike(20, 15, 1, 'up');
-      const s = L.spike(26, 15, 1, 'up', { hidden: true });
-      L.on(() => L.px > 24.5, () => s.pop());
-      L.door(29, 15);
+      [8, 14, 20, 26].forEach((x, i) => L.laser(x, 10, 0.3, 5, { on: 0.9, off: 1.0, phase: i * 0.5 }));
+      L.on(() => L.px > 16, () => { L.speedMul = 2.2; L.say('2x speed'); });
+      L.on(() => L.px > 26.8, () => { L.speedMul = 1; L.player.vx = Math.min(L.player.vx, 8); L.say('normal'); });
+      trap(L, 28, 15, 1, () => L.px > 26.5);
+      L.door(30, 15);
     },
   },
   {
-    name: 'Crumble Road',
+    // ladders 1 and 3 are real; ladder 2 climbs into the floor and spikes the ground you left. the portal
+    // upstairs runs to the far end, and the way back is trapped.
+    name: 'Ladder Lie',
     build(L) {
       L.spawn(2, 15);
-      L.text(3, 6, 'The floor won\'t wait for you.');
-      L.block(0, 15, 5, 3);
-      for (let x = 5; x < 25; x++) L.block(x, 15, 1, 1, { crumble: 0.18 });
-      L.block(25, 15, 7, 3);
-      L.door(29, 15);
-    },
-  },
-  {
-    name: 'Crusher Alley',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(3, 6, 'Watch the ceiling.');
+      L.text(3, 6, 'Climb. Not that one.');
       L.block(0, 15, 32, 3);
-      const c1 = L.block(10, 0, 3, 7);
-      const c2 = L.block(20, 0, 3, 7);
-      L.on(() => L.px > 8.5, () => L.drop(c1, 0.4, { land: true }));
-      L.on(() => L.px > 18.5, () => L.drop(c2, 0.4, { land: true }));
-      L.door(29, 15);
+      L.block(0, 9, 10, 1); L.block(12, 9, 20, 1);              // middle floor, hole over ladder 1
+      L.block(0, 4, 19, 1); L.block(21, 4, 11, 1);              // top floor, hole over ladder 3
+      L.ladder(10.4, 8.5, 1.1, 6.5);
+      L.ladder(19.4, 3.5, 1.1, 5.5);
+      L.ladder(24.4, 10, 1.1, 5);                               // decoy: ends under the floor
+      trap(L, 23, 15, 4, () => L.py < 14 && L.px > 24 && L.px < 25.7);
+      trap(L, 15, 9, 1, () => L.py < 9 && L.py > 5 && L.px > 13.6);
+      const saw = L.saw(2, 8.2, 0.7);
+      L.on(() => L.py < 9 && L.py > 5 && L.px > 12, () => { saw.vx = 4.5; });
+      const d = L.door(29, 4);
+      L.on(() => L.py < 4 && L.near(d, 2.5), () => { L.moveDoor(d, 5, 4, 45); L.say('lol bye'); });
+      trap(L, 12, 4, 1, () => L.py < 4 && L.px < 15);
     },
   },
   {
-    name: 'Saw Dodge',
+    // the floor you can see is a painting. the floor you can't see is real.
+    name: 'Glass Floor',
     build(L) {
       L.spawn(2, 15);
-      L.text(3, 6, 'Jump when you hear it.');
-      L.block(0, 15, 32, 3);
-      const saw = L.saw(-2, 14.2, 0.8);
-      L.on(() => L.px > 6, () => { saw.vx = 7; });
-      L.door(29, 15);
-    },
-  },
-  {
-    name: 'Gap and Back',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(3, 6, 'The portal moved. Go get it.');
-      L.block(0, 15, 12, 3);
-      L.block(15, 15, 17, 3);
-      const d = L.door(28, 15);
-      L.on(() => L.near(d, 3), () => {
-        L.moveDoor(d, 3, 15, 40);
-        L.say('come back!');
-      });
-    },
-  },
-  {
-    name: 'Hidden Floor',
-    build(L) {
-      L.spawn(2, 15);
-      L.text(3, 6, 'Not all floors are visible.');
-      L.block(0, 15, 8, 3);
-      L.block(11, 15, 4, 3, { hidden: true });
-      L.block(18, 15, 4, 3, { hidden: true });
-      L.block(25, 15, 7, 3);
+      L.text(2, 6, 'Solid ground. Trust it.');
       L.spike(0, 18, 32, 'up');
-      L.door(29, 15);
+      L.block(0, 15, 6, 3);
+      L.block(8, 15, 3, 1, { solid: false }); L.block(14, 15, 3, 1, { solid: false });
+      L.block(7, 12.5, 2.5, 0.6, { hidden: true }); L.block(12, 12.5, 2.5, 0.6, { hidden: true });
+      L.block(17, 15, 4, 3);
+      L.spike(18, 15, 2, 'up', { fake: true });
+      for (let x = 21; x < 26; x++) L.block(x, 15, 1, 1, { crumble: 0.22 });
+      L.block(26, 15, 6, 3);
+      trap(L, 28, 15, 1, () => L.px > 26.5);
+      L.door(30, 15);
     },
   },
   {
-    name: 'Pop Quiz',
+    // gravity pads over a spiked ceiling and floor. the last flip flips your view, too.
+    name: 'Gravity Pinball',
     build(L) {
       L.spawn(2, 15);
-      L.text(3, 6, 'Spikes pop when you least expect it.');
+      L.text(3, 8, 'Pads flip gravity. Remember that.');
+      L.block(0, 15, 32, 3); L.block(0, 0, 32, 3);
+      L.pad(6, 15, 2, -1);
+      L.spike(10, 3, 2, 'down');
+      L.pad(14, 3, 2, 1);
+      L.spike(18, 15, 2, 'up');
+      L.pad(22, 15, 2, -1);
+      L.on(() => L.g < 0 && L.px > 22.2, () => L.flipView());
+      trap(L, 26, 3, 1, () => L.g < 0 && L.px > 24.5, 'down');
+      L.door(29.5, 4.6);
+    },
+  },
+  {
+    // the checkpoint flag shrinks you. only a tiny player fits the slots, and a saw starts chasing.
+    name: 'Shrink Ray',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(3, 6, 'Checkpoint ahead. Take it.');
       L.block(0, 15, 32, 3);
-      const s1 = L.spike(8, 15, 2, 'up', { hidden: true });
-      const s2 = L.spike(15, 15, 2, 'up', { hidden: true });
-      const s3 = L.spike(22, 15, 2, 'up', { hidden: true });
-      L.on(() => L.px > 6.5, () => s1.pop());
-      L.on(() => L.px > 13.5, () => s2.pop());
-      L.on(() => L.px > 20.5, () => s3.pop());
-      L.door(29, 15);
+      const f = L.flag(7, 15);
+      L.block(10, 0, 2, 14.3); L.block(12, 0, 10, 12.2); L.block(22, 0, 2, 14.3);   // slot, tunnel, slot
+      L.spike(14.5, 15, 1, 'up'); L.spike(18.5, 15, 1, 'up');
+      const saw = L.saw(-2, 14.2, 0.8);
+      L.on(() => L.player.grounded && Math.abs(L.px - 7.5) < 1.3, () => {
+        f.evil = true; saw.vx = 4.5;
+        const p = L.player; p.x += p.w / 4; p.y += p.h / 2; p.w /= 2; p.h /= 2;
+        L.say('tiny!'); L.shake(0.2, 0.2);
+      });
+      L.on(() => L.px > 24.5, () => {
+        const p = L.player; p.y -= p.h; p.x -= p.w / 2; p.w *= 2; p.h *= 2;
+        L.say('big again');
+      });
+      trap(L, 27.5, 15, 1, () => L.px > 26);
+      L.door(30, 15);
     },
   },
   {
-    name: 'The Long Jump',
+    // pitch black with strobing lights, two pits, two beams, and an x tile that sends you home
+    name: 'Strobe Light',
     build(L) {
       L.spawn(2, 15);
-      L.text(3, 6, 'One big gap. Commit.');
+      L.text(2, 6, 'Blink and you miss it.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 9, 3); L.block(11, 15, 10, 3); L.block(23, 15, 9, 3);
+      L.laser(15, 10, 0.3, 5, { on: 0.8, off: 1.0 });
+      L.laser(27, 10, 0.3, 5, { on: 0.8, off: 1.0, phase: 0.5 });
+      L.text(17.12, 14.65, '✕');
+      L.on(() => L.player.grounded && Math.abs(L.player.y + L.player.h - 15) < 0.05 && L.player.x < 18 && L.player.x + L.player.w > 17, () => {
+        const p = L.player; p.x = 1.6; p.y = 15 - p.h; p.vx = 0; p.vy = 0;
+        L.say('back to start!'); L.shake(0.2, 0.2);
+      }, { repeat: true });
+      trap(L, 28.8, 15, 1, () => L.px > 27.2);
+      L.door(30, 15);
+      L.wait(1.2, () => lightsOut(L, 2.2));
+    },
+  },
+  {
+    // changes with every death: which crusher is real, what goes wrong in the middle, which portal is real
+    name: 'Double Cross',
+    build(L) {
+      const odd = L.deaths % 2 === 1;
+      L.spawn(2, 15);
+      L.text(3, 5, odd ? 'Different this time?' : 'Same as always.');
+      L.block(0, 15, 32, 3);
+      const c1 = L.block(9, 0, 3, 8), c2 = L.block(19, 0, 3, 8);
+      const [real, fake] = odd ? [c2, c1] : [c1, c2];
+      L.on(() => L.px > real.x - 1.5, () => L.drop(real, 0.45, { land: true }));
+      retract(L, real);
+      L.drop(fake, 1e9);                                        // shakes forever, never falls
+      L.on(() => L.px > 14.5, () => { if (odd) L.jumpDelay = 0.16; else L.invert = true; });
+      L.on(() => L.px > 22.5, () => { L.invert = false; L.jumpDelay = 0; });
+      L.block(25, 13.2, 2.5, 0.5);
+      const ledge = L.block(28, 11.5, 4, 0.6);
+      const hi = L.door(29, 11.5, { fake: odd }), lo = L.door(29, 15, { fake: !odd });
+      const bad = L.spike(28.3, 15, 3.5, 'up', { hidden: true });
+      L.on(() => L.touch(odd ? hi : lo), () => {
+        bad.pop(); if (odd) L.drop(ledge, 0);
+        L.banner = { text: 'Trolled lol', sub: '', t: 0, color: '#ff3b5c' };
+      });
+    },
+  },
+  {
+    // three floors up while the lava rises; a patrolling saw guards each one
+    name: 'Sawtooth',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.6, 'Up we go. Mind the teeth.');
+      L.block(0, 15, 27, 3); L.block(28, 12.5, 4, 0.6);
+      L.block(0, 9.5, 26, 1); L.block(0, 7, 3, 0.6);
+      L.block(4, 4.5, 28, 1);
+      const lava = L.laser(0, 18.5, 32, 0.3, { on: 1e9, off: 1 });
+      L.on(() => true, () => { lava.y = Math.max(-1, 18.5 - Math.max(0, L.t - 2) * 0.55); }, { repeat: true });
+      const patrol = (lo, hi, y, f, ph = 0) => {
+        const s = L.saw((lo + hi) / 2, y, 0.7, { buried: true });
+        L.on(() => true, () => { s.x = lo + (hi - lo) * (0.5 + 0.5 * Math.sin(L.t * f + ph)); }, { repeat: true });
+      };
+      patrol(12, 14, 15, 1.7); patrol(15, 17, 9.5, 2.1); patrol(8, 10, 9.5, 1.5, 1); patrol(15, 17, 4.5, 2.4);
+      trap(L, 25, 4.5, 1, () => L.py < 5 && L.px > 23);
+      L.door(29.5, 4.5);
+    },
+  },
+  {
+    // stones that crumble under you climb to a ledge, and the portal flees across a ferry
+    name: 'Crumble Tower',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.6, 'Everything crumbles eventually.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 5, 3);
+      [[7, 13.5], [12, 11.5], [17, 9.5], [22, 7.5]].forEach(([x, y]) => L.block(x, y, 2.5, 0.6, { crumble: 0.45 }));
+      L.block(26, 5.5, 6, 1); L.block(0, 5.5, 6, 1);
+      ferry(L, L.block(22, 5.5, 3, 0.6), 8, 5.5, 5, 1.5);
+      const d = L.door(29.5, 5.5);
+      L.on(() => L.near(d, 2.5), () => { L.moveDoor(d, 2, 5.5, 45); L.mirror(); L.say('see ya!'); });
+    },
+  },
+  {
+    // the exam: a 2.5x sprint through a beam, gravity pads over a spiked roof, inverted crumbling stones,
+    // and a portal on the floor that is fake. the real one hangs from the ceiling.
+    name: 'Final Exam',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.6, 'Final exam. No notes.');
+      L.speedMul = 2.5;
+      L.spike(0, 18, 32, 'up');
       L.block(0, 15, 10, 3);
-      L.block(14, 17, 8, 1);
-      L.spike(14, 17, 8, 'up');
-      L.block(22, 15, 10, 3);
-      const s = L.spike(24, 15, 1, 'up', { hidden: true });
-      L.on(() => L.px > 22.5, () => s.pop());
-      L.door(29, 15);
+      L.laser(4.5, 10, 0.3, 5, { on: 0.7, off: 0.9 });
+      L.on(() => L.px > 7.2, () => { L.speedMul = 1; L.player.vx = Math.min(L.player.vx, 8); });
+      L.pad(8, 15, 1.8, -1);
+      L.block(8, 0, 11, 3);
+      L.spike(13, 3, 1, 'down');
+      L.pad(16, 3, 1.8, 1);
+      L.block(17, 15, 3, 3);
+      for (let x = 20; x < 23; x++) L.block(x, 15, 1, 1, { crumble: 0.18 });
+      const end = L.block(23, 15, 9, 3);
+      L.on(() => L.px > 19, () => { L.invert = true; L.say('inverted!'); });
+      L.on(() => L.px > 23.5, () => { L.invert = false; });
+      L.pad(26, 15, 1.8, -1);
+      L.block(24, 0, 8, 3);
+      L.door(29.5, 4.6);
+      const fake = L.door(29.5, 15, { fake: true });
+      trap(L, 28, 15, 1.2, () => L.px > 27);
+      L.on(() => L.touch(fake), () => {
+        L.fakeWin();
+        L.wait(1.1, () => { L.drop(end, 0); L.banner = { text: 'JK', sub: 'look up', t: 0, life: 1.8 }; });
+      });
     },
   },
 ];
@@ -1319,7 +1381,7 @@ const MULTI = [
       L.block(19, 0, 2, 3);
       const gate = L.block(19, 3, 2, 12);
       const a = L.button(13, 15, 1.4), b = L.button(25, 15, 1.4);
-      L.gate(gate, 0, -6, () => a.down || b.down, { speed: 10, closeSpeed: 30, color: 'orange' });
+      L.gate(gate, 0, -6, () => a.down || b.down || L.players.some((p) => p.done), { speed: 10, closeSpeed: 30, color: 'orange' });
       const s = L.spike(22, 15, 2, 'up', { hidden: true });
       L.on(() => L.px > 20.6, () => s.pop());
       const d = L.door(29, 15);
@@ -1456,8 +1518,8 @@ const MULTI = [
       const bridge = [];
       for (let x = 9; x < 23; x++) bridge.push(L.block(x, 15, 1, 1, x === 15 || x === 16 ? { crumble: 0.35 } : {}));
       L.block(23, 15, 9, 3);
-      L.block(9, 9, 14, 3);
-      L.spike(9, 12, 14, 'down');
+      L.block(9, 8.3, 14, 3);
+      L.spike(9, 11.3, 14, 'down');
       L.on(() => L.count((p) => bridge.includes(p.ground)) >= 2, () => {
         bridge.forEach((b, i) => L.drop(b, i * 0.02));
         L.say('too heavy!');
@@ -1500,8 +1562,8 @@ const MULTI = [
       cage.forEach((c) => L.gate(c, 0, -7, () => btn.down, { speed: 3, closeSpeed: 20, color: 'orange' }));
       const s = L.spike(20, 15, 2, 'up', { hidden: true });
       L.on(() => crate.y > 13.5, () => s.pop());
-      // the moment one of you is in, the crate gives up
-      L.on(() => L.players.some((p) => p.done), () => L.wait(0.4, () => { crate.gone = true; L.say('crate broke'); }));
+      // the moment one of you is in, the crate gives up briefly (restores so partner can't softlock)
+      L.on(() => L.players.some((p) => p.done), () => L.wait(0.4, () => { crate.gone = true; L.say('crate broke'); L.wait(1.5, () => { crate.gone = false; }); }));
       L.door(25.65, 15);
     },
   },
@@ -1542,7 +1604,7 @@ const MULTI = [
       // gate that opens while either button is pressed
       L.block(16, 0, 2, 3);
       const gate = L.block(16, 3, 2, 12);
-      L.gate(gate, 0, -6, () => btn.down || b2.down, { speed: 12, closeSpeed: 25, color: 'red' });
+      L.gate(gate, 0, -6, () => btn.down || b2.down || L.players.some((p) => p.done), { speed: 12, closeSpeed: 25, color: 'red' });
       // spikes on each side
       const sl = L.spike(4, 15, 2, 'up', { hidden: true });
       const sr = L.spike(20, 15, 2, 'up', { hidden: true });
@@ -1563,8 +1625,8 @@ const MULTI = [
       L.block(30, 0, 2, 3); L.block(28, 0, 2, 12);
       const gateR = L.block(28, 12, 2, 3);
       L.block(24, 15, 8, 3);
-      const btnL = L.button(22, 15, 1.4, { color: 'green' });   // near right player opens left gate
-      const btnR = L.button(8, 15, 1.4, { color: 'purple' });  // near left player opens right gate
+      const btnL = L.button(22, 15, 1.4, { color: 'green', latch: true });   // near right player opens left gate
+      const btnR = L.button(8, 15, 1.4, { color: 'purple', latch: true });  // near left player opens right gate
       L.gate(gateL, 0, -3, () => btnL.down, { speed: 10, closeSpeed: 30, color: 'green' });
       L.gate(gateR, 0, -3, () => btnR.down, { speed: 10, closeSpeed: 30, color: 'purple' });
       // spikes pop mid-bridge when players swap sides
@@ -1574,7 +1636,7 @@ const MULTI = [
       L.on(() => L.all(p => p.x + 0.4 > 10 && p.x + 0.4 < 22), () => { L.swap = true; });
       L.on(() => L.all(p => p.x + 0.4 < 4 || p.x + 0.4 > 28), () => { L.swap = false; });
       L.door(0, 15);   // left door
-      L.door(29, 15);  // right door
+      L.door(30.4, 15);  // right door
     },
   },
   {
@@ -1585,11 +1647,11 @@ const MULTI = [
       L.block(0, 15, 32, 3);
       let stage = 0;
       const b1 = L.button(5, 15, 1.4, { color: 'green' });
-      const b2 = L.button(16, 15, 1.4, { color: 'purple' });
-      const b3 = L.button(27, 15, 1.4, { color: 'orange' });
+      const b2 = L.button(14, 15, 1.4, { color: 'purple' });
+      const b3 = L.button(21, 15, 1.4, { color: 'orange' });
       // pressing wrong order: saw punishes
       const saw1 = L.saw(10, 14.2, 0.75);
-      const saw2 = L.saw(21, 14.2, 0.75);
+      const saw2 = L.saw(18, 14.2, 0.75);
       L.on(() => stage === 0 && b1.down, () => { stage = 1; L.say('1 of 3'); });
       L.on(() => stage === 1 && b2.down, () => { stage = 2; L.say('2 of 3'); });
       L.on(() => stage === 2 && b3.down, () => { stage = 3; L.say('unlocked!'); });
@@ -1597,28 +1659,27 @@ const MULTI = [
       L.on(() => stage === 0 && (b2.down || b3.down), () => { saw1.vx = 8; saw2.vx = 8; L.say('wrong order!'); }, { repeat: true });
       L.on(() => stage === 1 && b3.down, () => { saw2.vx = 8; L.say('skip!'); }, { repeat: true });
       // gate only opens after all 3
-      L.block(21, 0, 2, 4);
-      const finalGate = L.block(21, 4, 2, 11);
+      L.block(24, 0, 2, 4);
+      const finalGate = L.block(24, 4, 2, 11);
       L.gate(finalGate, 0, -11, () => stage >= 3, { speed: 6, color: 'orange' });
-      const sp = L.spike(29, 15, 2, 'up', { hidden: true });
-      L.on(() => stage >= 3 && L.px > 27, () => sp.pop());
-      L.door(29, 15);
+      const sp = L.spike(27.5, 15, 1, 'up', { hidden: true });
+      L.on(() => stage >= 3 && L.px > 26, () => sp.pop());
+      L.door(29.8, 15);
     },
   },
   {
     name: 'Gravity Split',
     build(L) {
-      L.spawn(2, 15); L.spawn2(2, 15);
-      L.text(3, 8, 'The gate closes fast. Run together or run last.');
+      L.spawn(2, 15);
+      L.text(3, 8, 'Flip up together. Gate closes fast.');
       L.block(0, 15, 32, 3);
-      // platforms for each lane
-      L.block(10, 15, 8, 1); L.block(20, 15, 8, 1);
-      // gate: full-height wall that slides up when first player crosses x=14.
-      // Closes slowly — the second player must rush through before it shuts.
-      const gate = L.block(16, 0, 2, 15);
-      L.gate(gate, 0, -15, () => L.any(p => p.x + p.w / 2 > 14), { speed: 12, closeSpeed: 5, color: 'purple' });
+      L.block(0, 0, 32, 3);
+      L.pad(7, 15, 2, -1);
+      L.pad(19, 3, 2, 1);
+      const gate = L.block(16, 3, 2, 12);
+      L.gate(gate, 0, 12, () => L.any((p) => p.x + p.w / 2 > 14) || L.players.some((p) => p.done), { speed: 12, closeSpeed: 5, color: 'purple' });
       const sp = L.spike(26, 15, 2, 'up', { hidden: true });
-      L.on(() => L.py > 10 && L.px > 24, () => sp.pop());
+      L.on(() => L.g > 0 && L.py > 10 && L.px > 24, () => sp.pop());
       L.door(29, 15);
     },
   },
@@ -1637,8 +1698,8 @@ const MULTI = [
       const g1 = L.block(11, 4, 2, 11);
       L.block(20, 0, 2, 4);
       const g2 = L.block(20, 4, 2, 11);
-      L.gate(g1, 0, -5, () => b1.down, { speed: 12, closeSpeed: 10, color: 'red' });
-      L.gate(g2, 0, -5, () => b2.down, { speed: 12, closeSpeed: 10, color: 'red' });
+      L.gate(g1, 0, -5, () => b1.down || b2.down || L.players.some((p) => p.done), { speed: 12, closeSpeed: 10, color: 'red' });
+      L.gate(g2, 0, -5, () => b2.down || b3.down || L.players.some((p) => p.done), { speed: 12, closeSpeed: 10, color: 'red' });
       // overheld: a saw spawns
       let saw1 = false, saw2 = false, saw3 = false;
       L.on(() => !saw1 && b1.held > 2.0, () => { saw1 = true; const s = L.saw(7, -1, 0.7); s.vy = 12; L.say('held too long!'); });
@@ -1655,22 +1716,22 @@ const MULTI = [
       L.spawn(4, 15); L.spawn2(26, 15);
       L.text(3, 5, 'One up, one down. Neither stays.');
       L.block(0, 15, 8, 3); L.block(24, 15, 8, 3);
-      // central platform that tilts: left side holds one, right holds the other
-      const platL = L.block(8, 13, 7, 2);
-      const platR = L.block(17, 13, 7, 2);
+      // central platforms that tilt: left side holds one, right holds the other
+      const platL = L.block(8, 13, 6, 2);
+      const platR = L.block(18, 13, 6, 2);
       const btnL = L.button(10, 13, 1.4, { color: 'orange' });
-      const btnR = L.button(20, 13, 1.4, { color: 'green' });
-      // when left is pressed, right plate drops; vice versa
-      L.gate(platR, 0, 2, () => btnL.down && !btnR.down, { speed: 8, closeSpeed: 12, color: 'orange' });
-      L.gate(platL, 0, 2, () => btnR.down && !btnL.down, { speed: 8, closeSpeed: 12, color: 'green' });
-      L.block(14, 0, 4, 3); // top arch
-      const archGate = L.block(14, 3, 4, 12);
-      L.gate(archGate, 0, -12, () => btnL.down && btnR.down, { speed: 6, color: 'purple' });
-      const sp1 = L.spike(13, 13, 2, 'up', { hidden: true });
-      const sp2 = L.spike(17, 13, 2, 'up', { hidden: true });
-      L.on(() => L.any(p => p.x + 0.4 > 12 && p.x + 0.4 < 14), () => sp1.pop());
-      L.on(() => L.any(p => p.x + 0.4 > 17 && p.x + 0.4 < 19), () => sp2.pop());
-      L.door(16, 15);
+      const btnR = L.button(20.6, 13, 1.4, { color: 'green' });
+      const sp1 = L.spike(12.8, 13, 1.2, 'up', { hidden: true });
+      const sp2 = L.spike(18, 13, 1.2, 'up', { hidden: true });
+      // when left is pressed, right plate drops; vice versa (keep buttons & spikes synced to platform y)
+      L.gate(platR, 0, 2, () => { btnR.y = platR.y; sp2.y = platR.y; return btnL.down && !btnR.down; }, { speed: 8, closeSpeed: 12, color: 'orange' });
+      L.gate(platL, 0, 2, () => { btnL.y = platL.y; sp1.y = platL.y; return btnR.down && !btnL.down; }, { speed: 8, closeSpeed: 12, color: 'green' });
+      const cage = [L.block(14, 10.5, 4, 0.5), L.block(14, 11, 0.5, 4), L.block(17.5, 11, 0.5, 4)];
+      cage.forEach((c) => L.gate(c, 0, -8, () => (btnL.down && btnR.down) || L.players.some((p) => p.done), { speed: 8, closeSpeed: 5, color: 'purple' }));
+      L.on(() => L.any((p) => p.x + 0.4 > 12.0 && p.x + 0.4 < 14), () => sp1.pop());
+      L.on(() => L.any((p) => p.x + 0.4 > 18 && p.x + 0.4 < 19.6), () => sp2.pop());
+      L.block(14, 15, 4, 3);
+      L.door(15.4, 15);
     },
   },
   {
@@ -1720,16 +1781,16 @@ const MULTI = [
   {
     name: 'The Big Push',
     build(L) {
-      L.spawn(2, 15);
+      L.spawn(8, 15);
       L.text(3, 5, 'Crates everywhere. Only one matters.');
       L.block(0, 11, 6, 7); L.block(6, 15, 26, 3);
       // two crates: one mimic, one real, and room to manoeuvre
       L.crate(1, 11, 1, { mimic: true });
       const realCrate = L.crate(4, 11);
-      const btn = L.button(24, 15, 2.4, { color: 'orange' });
+      const btn = L.button(14, 15, 2.4, { color: 'orange' });
       const cage = [L.block(27, 10, 4.5, 0.5), L.block(27, 10.5, 0.5, 4.5), L.block(31, 10.5, 0.5, 4.5)];
       cage.forEach(c => L.gate(c, 0, -7, () => btn.down, { speed: 3, closeSpeed: 20, color: 'orange' }));
-      L.on(() => L.players.some(p => p.done), () => L.wait(0.4, () => { realCrate.gone = true; L.say('crate broke'); }));
+      L.on(() => L.players.some(p => p.done), () => L.wait(0.4, () => { realCrate.gone = true; L.say('crate broke'); L.wait(1.5, () => { realCrate.gone = false; }); }));
       const sp = L.spike(21, 15, 2, 'up', { hidden: true });
       L.on(() => realCrate.y > 13.5, () => sp.pop());
       L.door(28.65, 15);
@@ -1748,18 +1809,385 @@ const MULTI = [
       const b1 = L.button(5, 15, 1.4, { color: 'blue' });
       const b2 = L.button(26, 6, 1.4, { color: 'blue' });
       let hic = -1;
-      L.gate(lift, 0, -8.4, () => L.t >= hic && (b1.down || b2.down), { speed: 4, color: 'blue' });
+      L.gate(lift, 0, -8.4, () => L.t >= hic && (b1.down || b2.down || (L.players.some((p) => p.done) && (L.t % 5) < 2.5)), { speed: 4, color: 'blue' });
       L.on(() => lift.y < 10, () => { hic = L.t + 1; L.say('careful'); });
       // spikes at top platform after reaching it
-      const st = L.spike(17, 6, 3, 'up', { hidden: true });
+      const st = L.spike(17, 6, 2, 'up', { hidden: true });
       L.on(() => L.py < 7 && L.px < 20, () => st.pop());
-      // fake door visible, real door hidden
+      // fake door visible, real door up top past the second button
       const fake = L.door(28, 15, { fake: true });
-      L.block(19, 6, 2, 1, { hidden: true });
-      L.door(19, 6);
+      L.door(29, 6);
       L.on(() => L.touch(fake), () => {
         L.fakeWin();
         L.wait(1.2, () => { L.drop(trap, 0); L.mirror(); L.banner = { text: 'JK', sub: 'platform above has the real door', t: 0, life: 2 }; });
+      });
+    },
+  },
+  // ---------------------------------------------------------------- levels 21-40 (multiplayer, co-op gauntlet)
+  {
+    name: 'Laser Gate',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 6, 'Buttons cut the beams. Don\'t drop yours early.');
+      L.block(0, 15, 32, 3);
+      L.block(13.7, 0, 0.9, 9); L.block(21.7, 0, 0.9, 9);
+      const l1 = L.laser(14, 9, 0.3, 6, { on: 1e9, off: 1 });
+      const l2 = L.laser(22, 9, 0.3, 6, { on: 1e9, off: 1 });
+      const b1 = L.button(10, 15, 1.4, { color: 'orange' });
+      const b2 = L.button(18, 15, 1.4, { color: 'green' });
+      const b3 = L.button(26, 15, 1.4, { color: 'green', latch: true });
+      L.on(() => true, () => {
+        l1.y = (b1.down || b2.down || b3.down) ? -20 : 9;
+        l2.y = (b2.down || b3.down) ? -20 : 9;
+      }, { repeat: true });
+      L.on(() => b3.down, () => { L.swap = true; L.say('swapped!'); });
+      trap(L, 28, 15, 1, () => L.px > 26.8);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Ladder Boost',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 6, 'Hold the hatch open. Watch the exit.');
+      L.block(0, 15, 32, 3); L.block(12, 9, 1.8, 1); L.block(15.3, 9, 16.7, 1);
+      L.ladder(14, 8.5, 1.1, 6.5);
+      const b1 = L.button(7, 15, 1.4, { color: 'green' });
+      const b2 = L.button(21, 9, 1.4, { color: 'green', latch: true });
+      const hatch = L.block(13.2, 8, 2.8, 1);
+      L.gate(hatch, -3, 0, () => b1.down || b2.down, { speed: 12, color: 'green' });
+      trap(L, 18, 9, 1, () => L.py < 9.5 && L.px > 16.3);
+      const d = L.door(29, 9);
+      L.on(() => L.near(d, 2.5), () => { L.moveDoor(d, 25, 15, 35); L.mirror(); L.say('downstairs!'); });
+    },
+  },
+  {
+    name: 'Crate Relay',
+    build(L) {
+      L.spawn(11, 15);
+      L.text(10, 5, 'Boost up. Watch out for the angry box.');
+      L.block(0, 11, 9, 7); L.block(9, 15, 23, 3);
+      L.crate(7, 11, 1, { mimic: true });
+      L.crate(4, 11);
+      const b1 = L.button(15, 15, 2.0, { color: 'orange' });
+      L.block(23, 0, 2, 3);
+      const gate = L.block(23, 3, 2, 12);
+      L.gate(gate, 0, -7, () => b1.down, { speed: 8, closeSpeed: 24, color: 'orange' });
+      trap(L, 26.5, 15, 1, () => L.px > 25);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Double Lift',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 4, 'Two lifts. Four plates. Try not to swap.');
+      L.block(0, 15, 32, 3);
+      L.block(11, 10, 6, 1); L.block(11, 11, 1, 4);
+      L.block(20, 6, 12, 1); L.block(20, 7, 1, 8);
+      const lift1 = L.block(7, 14.4, 3, 0.6);
+      const lift2 = L.block(17, 9.4, 3, 0.6);
+      const b1 = L.button(3, 15, 1.4, { color: 'blue' }), b2 = L.button(12.2, 10, 1.4, { color: 'blue' });
+      const b3 = L.button(14.5, 10, 1.4, { color: 'purple' }), b4 = L.button(23, 6, 1.4, { color: 'purple' });
+      L.gate(lift1, 0, -4.4, () => b1.down || b2.down || (L.players.some((p) => p.done) && (L.t % 5) < 2.5), { speed: 5, color: 'blue' });
+      L.gate(lift2, 0, -3.4, () => b3.down || b4.down || (L.players.some((p) => p.done) && (L.t % 5) < 2.5), { speed: 5, color: 'purple' });
+      L.on(() => L.all((p) => p.y < 6.5), () => { L.swap = true; L.say('swapped!'); });
+      trap(L, 26, 6, 1, () => L.py < 6.5 && L.px > 24.5);
+      L.door(29.5, 6);
+    },
+  },
+  {
+    name: 'Speed Trap',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Fast zone ahead. Don\'t outrun your timing.');
+      L.block(0, 15, 32, 3);
+      L.block(13.5, 0, 0.9, 10); L.block(16, 0, 2, 3); L.block(18.5, 0, 0.9, 10);
+      L.laser(13.8, 10, 0.3, 5, { on: 0.7, off: 1.1 });
+      L.laser(18.8, 10, 0.3, 5, { on: 0.7, off: 1.1, phase: 0.45 });
+      const b1 = L.button(11, 15, 1.4, { color: 'red' });
+      const b2 = L.button(20, 15, 1.4, { color: 'red', latch: true });
+      const gate = L.block(16, 3, 2, 12);
+      L.gate(gate, 0, -7, () => b1.down || b2.down, { speed: 12, closeSpeed: 24, color: 'red' });
+      L.on(() => L.any((p) => p.x > 7 && p.x < 22) && !L.all((p) => p.x >= 22), () => { L.speedMul = 2.5; }, { repeat: true });
+      L.on(() => L.speedMul > 1 && L.all((p) => p.x >= 22), () => { L.speedMul = 1; for (const p of L.players) p.vx = Math.min(p.vx, 8); }, { repeat: true });
+      trap(L, 26, 15, 1, () => L.px > 24.5);
+      L.door(29.5, 15);
+    },
+  },
+  {
+    name: 'Mirror Twins',
+    build(L) {
+      L.spawn(2, 15); L.spawn2(29, 15);
+      L.text(6, 5, 'Meet in the middle. Try not to flinch.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 11, 3); L.block(13, 15, 6, 3); L.block(21, 15, 11, 3);
+      L.block(13, 0, 1, 3); L.block(18, 0, 1, 3);
+      const gL = L.block(13, 3, 1, 12), gR = L.block(18, 3, 1, 12);
+      const bL = L.button(7, 15, 1.4, { color: 'purple', latch: true });
+      const bR = L.button(24, 15, 1.4, { color: 'green', latch: true });
+      L.gate(gL, 0, -7, () => bR.down, { speed: 10, color: 'green' });
+      L.gate(gR, 0, -7, () => bL.down, { speed: 10, color: 'purple' });
+      L.on(() => bL.down && bR.down, () => L.mirror());
+      trap(L, 10, 15, 1, () => L.px > 8.5 && L.px < 12);
+      trap(L, 21, 15, 1, () => L.px < 23.5 && L.px > 19);
+      L.door(15.4, 15);
+    },
+  },
+  {
+    name: 'Ceiling Walk',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 7, 'Shared gravity. Wait for each other.');
+      L.block(0, 15, 32, 3); L.block(0, 0, 32, 3);
+      L.pad(7, 15, 2, -1);
+      L.spike(12, 3, 1.5, 'down');
+      L.pad(16, 3, 2, 1);
+      L.on(() => L.g > 0 && L.px > 18, () => { L.swap = true; L.say('swapped!'); });
+      const gate = L.block(23, 3, 2, 12);
+      const b1 = L.button(19, 15, 1.4, { color: 'orange' });
+      const b2 = L.button(25.5, 15, 1.4, { color: 'orange', latch: true });
+      L.gate(gate, 0, -7, () => b1.down || b2.down, { speed: 12, closeSpeed: 24, color: 'orange' });
+      trap(L, 27.5, 15, 1, () => L.px > 26.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'False Floor',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 6, 'Hold the bridge. Hope nobody swaps.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 6, 3); L.block(11, 15, 5, 3); L.block(21, 15, 11, 3);
+      const br1 = L.block(6, 18, 5, 1), br2 = L.block(16, 18, 5, 1);
+      const b1 = L.button(3.5, 15, 1.4, { color: 'green' });
+      const b2 = L.button(13, 15, 1.4, { color: 'purple' });
+      const b3 = L.button(23, 15, 1.4, { color: 'purple', latch: true });
+      L.gate(br1, 0, -3, () => b1.down || b2.down || b3.down, { speed: 16, color: 'green' });
+      L.gate(br2, 0, -3, () => b2.down || b3.down, { speed: 16, color: 'purple' });
+      trap(L, 11.5, 15, 1, () => b2.down);
+      L.on(() => L.player.grounded && L.px > 21.5 && L.other.grounded, () => L.swapPlaces());
+      trap(L, 26.5, 15, 1, () => L.px > 25);
+      L.door(29.5, 15);
+    },
+  },
+  {
+    name: 'Crusher Tag',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Three crushers, one beam. Trade off.');
+      L.block(0, 15, 32, 3); L.block(8, 0, 16, 6.5);
+      const c1 = L.block(8, 10, 4, 5), c2 = L.block(14, 10, 4, 5), c3 = L.block(20, 10, 4, 5);
+      const b1 = L.button(5, 15, 1.4, { color: 'orange' });
+      const b2 = L.button(12.3, 15, 1.4, { color: 'green' });
+      const b3 = L.button(25.5, 15, 1.4, { color: 'green', latch: true });
+      L.gate(c1, 0, -3.5, () => b1.down || b2.down || b3.down, { speed: 14, closeSpeed: 28, color: 'orange' });
+      L.gate(c2, 0, -3.5, () => b2.down || b3.down, { speed: 14, closeSpeed: 28, color: 'green' });
+      L.gate(c3, 0, -3.5, () => b2.down || b3.down, { speed: 14, closeSpeed: 28, color: 'green' });
+      L.laser(18.8, 6.5, 0.3, 8.5, { on: 0.7, off: 1.1 });
+      trap(L, 28, 15, 1, () => L.px > 26.8);
+      L.door(30, 15);
+    },
+  },
+  {
+    name: 'Red Light Duo',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.6, 'Both freeze on RED. Rules flip halfway.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 9, 3); L.block(11, 15, 8, 3); L.block(21, 15, 11, 3);
+      L.spike(14, 15, 1.5, 'up');
+      trap(L, 26, 15, 1, () => L.px > 24.5);
+      const setGo = redGreen(L);
+      L.on(() => L.px > 16, () => { setGo('red'); L.say('MOVE ON RED'); });
+      L.door(29.5, 15);
+    },
+  },
+  {
+    name: 'Swap Elevator',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Ride the lift. Don\'t get comfortable.');
+      L.block(0, 15, 32, 3); L.block(17, 7, 15, 1); L.block(17, 8, 1, 7);
+      const lift = L.block(13, 14.4, 3, 0.6);
+      const b1 = L.button(6, 15, 1.4, { color: 'blue' }), b2 = L.button(21, 7, 1.4, { color: 'blue' });
+      L.gate(lift, 0, -7.4, () => b1.down || b2.down || (L.players.some((p) => p.done) && (L.t % 5) < 2.5), { speed: 4.5, color: 'blue' });
+      L.on(() => lift.y < 10.5, () => { L.swapPlaces(); L.say('whoops'); });
+      trap(L, 18.5, 7, 1.5, () => L.py < 7.5 && L.px > 16 && L.px < 20);
+      const d = L.door(29, 7);
+      L.on(() => L.near(d, 2.2), () => { L.moveDoor(d, 23.5, 7, 35); L.mirror(); L.say('nope'); });
+    },
+  },
+  {
+    name: 'Mimic Gauntlet',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Two boxes lie. Push the real one.');
+      L.block(0, 15, 32, 3);
+      L.crate(6, 15);
+      L.crate(11, 15, 1, { mimic: true });
+      L.crate(17, 15, 1, { mimic: true });
+      const b1 = L.button(22, 15, 2.0, { color: 'orange' });
+      const cage = [L.block(27, 10, 4.5, 0.5), L.block(27, 10.5, 0.5, 4.5), L.block(31, 10.5, 0.5, 4.5)];
+      cage.forEach((c) => L.gate(c, 0, -7, () => b1.down, { speed: 4, closeSpeed: 20, color: 'orange' }));
+      trap(L, 25, 15, 1, () => L.px > 23.8);
+      L.door(28.65, 15);
+    },
+  },
+  {
+    name: 'Headstack Hotel',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Boost up. Send down the steps.');
+      L.block(0, 15, 10, 3); L.block(10, 11.2, 8, 6.8); L.block(18, 7.4, 14, 10.6);
+      const s1 = L.block(-3, 12.6, 3, 0.6), s2 = L.block(-3, 8.8, 3, 0.6);
+      const b1 = L.button(13, 11.2, 1.4, { color: 'green', latch: true });
+      const b2 = L.button(21, 7.4, 1.4, { color: 'purple', latch: true });
+      L.gate(s1, 10, 0, () => b1.down, { speed: 12, color: 'green' });
+      L.gate(s2, 18, 0, () => b2.down, { speed: 14, color: 'purple' });
+      trap(L, 25, 7.4, 1.5, () => b2.down);
+      L.on(() => L.all((p) => p.y < 7.8 && p.x > 22), () => { L.invert = true; L.say('inverted!'); });
+      L.on(() => L.py < 7.8 && L.px > 27.5, () => { L.invert = false; });
+      L.door(29.5, 7.4);
+    },
+  },
+  {
+    name: 'Lag Swap',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Jump lag. Control swaps. Mirror. Enjoy.');
+      L.jumpDelay = 0.16;
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 6, 3); L.block(8, 15, 10, 3); L.block(20, 15, 12, 3);
+      L.on(() => L.px > 9, () => { L.swap = true; L.say('swapped!'); });
+      L.on(() => L.px > 20.5, () => { L.swap = false; L.mirror(); });
+      trap(L, 13.5, 15, 1, () => L.px > 11.5);
+      trap(L, 26, 15, 1, () => L.px > 24);
+      L.door(30, 15);
+    },
+  },
+  {
+    name: 'Split Lanes II',
+    build(L) {
+      L.spawn(2, 8); L.spawn2(2, 15);
+      L.text(2, 2.5, 'Upper lane has a beam. Lower lane flips upside down.');
+      L.block(0, 15, 32, 3); L.block(0, 8, 25, 1);
+      L.block(12, 0, 1, 4);
+      const g1 = L.block(12, 4, 1, 4), g2 = L.block(16, 9, 1, 6);
+      const b1 = L.button(9, 15, 1.4, { color: 'green' });
+      const b2 = L.button(15, 8, 1.4, { color: 'purple', latch: true });
+      L.gate(g1, 0, -4, () => b1.down, { speed: 10, closeSpeed: 20, color: 'green' });
+      L.gate(g2, 0, 6, () => b2.down, { speed: 10, color: 'purple' });
+      L.laser(20, 0, 0.3, 8, { on: 0.8, off: 1.0 });
+      L.on(() => b2.down, () => L.flipView());
+      trap(L, 27, 15, 1, () => L.py > 10 && L.px > 25.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Bridge Collapse',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'One at a time on the bridge. Dodge the beam.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 7, 3);
+      const bridge = [];
+      for (let x = 7; x < 19; x++) bridge.push(L.block(x, 15, 1, 1));
+      L.block(19, 15, 13, 3);
+      L.block(8, 0, 10, 12.2); L.spike(8, 12.2, 10, 'down');
+      L.laser(13, 12.2, 0.3, 2.8, { on: 0.7, off: 1.1 });
+      L.on(() => L.count((p) => bridge.includes(p.ground)) >= 2, () => {
+        bridge.forEach((b, i) => L.drop(b, i * 0.02)); L.say('too heavy!');
+      });
+      L.on(() => L.px > 19.5, () => { L.swap = true; L.say('swapped!'); });
+      L.block(25, 0, 2, 3);
+      const gate = L.block(25, 3, 2, 12);
+      const b1 = L.button(22, 15, 1.4, { color: 'red', latch: true });
+      L.gate(gate, 0, -7, () => b1.down, { speed: 10, color: 'red' });
+      trap(L, 27.5, 15, 1, () => L.px > 26.2);
+      L.door(30, 15);
+    },
+  },
+  {
+    name: 'Trapdoor Relay',
+    build(L) {
+      L.spawn(2, 9); L.spawn2(2, 15);
+      L.text(2, 3, 'Open the floor. Drop the box on the switch.');
+      L.block(0, 15, 32, 3);
+      L.block(2, 9, 10, 1); L.block(14, 9, 8, 1);
+      L.ladder(0.5, 8.5, 1.1, 6.5);
+      const td = L.block(12, 9, 2, 1);
+      L.crate(5, 9); L.crate(9, 9, 1, { mimic: true });
+      const b1 = L.button(6, 15, 1.4, { color: 'orange' });
+      const b2 = L.button(12.1, 15, 1.8, { color: 'purple' });
+      L.gate(td, 2, 0, () => b1.down, { speed: 12, color: 'orange' });
+      L.block(25, 0, 2, 3);
+      const gate = L.block(25, 3, 2, 12);
+      L.gate(gate, 0, -7, () => b2.down, { speed: 10, color: 'purple' });
+      trap(L, 28, 15, 1, () => L.px > 26.5);
+      L.door(30, 15);
+    },
+  },
+  {
+    name: 'Fakeout Plaza',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 3, 'So many doors. Hit both switches.');
+      L.block(0, 15, 32, 3); L.block(10, 9.5, 12, 0.8); L.ladder(8.5, 9, 1.1, 6);
+      const b1 = L.button(4, 15, 1.4, { color: 'green', latch: true });
+      const b2 = L.button(24, 15, 1.4, { color: 'purple', latch: true });
+      const f1 = L.door(14, 15, { fake: true }), f2 = L.door(28, 15, { fake: true });
+      const t1 = L.spike(13, 15, 3, 'up', { hidden: true }), t2 = L.spike(27, 15, 3, 'up', { hidden: true });
+      L.on(() => L.touch(f1), () => { t1.pop(); L.banner = { text: 'FAKE', sub: '', t: 0, life: 1.4 }; });
+      L.on(() => L.touch(f2), () => { t2.pop(); L.banner = { text: 'FAKE', sub: '', t: 0, life: 1.4 }; });
+      const cage = [L.block(14, 5, 4, 0.5), L.block(14, 5.5, 0.5, 4), L.block(17.5, 5.5, 0.5, 4)];
+      cage.forEach((c) => L.gate(c, 0, -5, () => b1.down && b2.down, { speed: 6, color: 'purple' }));
+      L.on(() => b2.down, () => L.mirror());
+      trap(L, 19, 15, 1.5, () => b2.down && L.px < 22 && L.py > 10);
+      L.door(15.4, 9.5);
+    },
+  },
+  {
+    name: 'Twin Saws',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 6, 'Watch the teeth. Don\'t forget the switch.');
+      L.block(0, 15, 32, 3); L.block(0, 0, 32, 3);
+      for (const [lo, hi, f] of [[9, 11.5, 1.8], [20.5, 23, 2.2]]) {
+        const s = L.saw((lo + hi) / 2, 15, 0.7, { buried: true });
+        L.on(() => true, () => { s.x = lo + (hi - lo) * (0.5 + 0.5 * Math.sin(L.t * f)); }, { repeat: true });
+      }
+      const gate = L.block(16, 3, 2, 12);
+      const b1 = L.button(13.5, 15, 1.4, { color: 'red' });
+      const b2 = L.button(18.5, 15, 1.4, { color: 'red', latch: true });
+      L.gate(gate, 0, -7, () => b1.down || b2.down, { speed: 12, closeSpeed: 24, color: 'red' });
+      L.on(() => L.all((p) => p.x > 18), () => { L.swap = true; L.say('swapped!'); });
+      trap(L, 26.5, 15, 1, () => L.px > 25);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Co-op Finale',
+    build(L) {
+      L.spawn(8.4, 15);
+      L.text(8, 3.5, 'Final co-op test. Trust no exit.');
+      L.block(0, 11.2, 7, 6.8); L.block(7, 15, 25, 3);
+      L.crate(5, 11.2, 1, { mimic: true }); L.crate(2.5, 11.2);
+      const b1 = L.button(11, 15, 2.0, { color: 'orange' });
+      L.block(14.5, 0, 1.5, 3);
+      const gate = L.block(14.5, 3, 1.5, 12);
+      L.gate(gate, 0, -7, () => b1.down, { speed: 10, closeSpeed: 24, color: 'orange' });
+      const lift = L.block(17, 14.4, 3, 0.6);
+      L.on(() => b1.down, () => ferry(L, lift, 17, 7.5, 4, 1.0));
+      L.block(21, 7.5, 11, 1);
+      L.laser(24.5, 0, 0.3, 7.5, { on: 0.7, off: 1.1 });
+      L.on(() => L.py < 8 && L.px > 22, () => L.mirror());
+      trap(L, 27, 7.5, 1, () => L.py < 8 && L.px > 25.5);
+      L.door(29.5, 7.5);
+      const fake = L.door(29, 15, { fake: true });
+      const trapSp = L.spike(27.5, 15, 4.5, 'up', { hidden: true });
+      L.on(() => L.touch(fake), () => {
+        L.fakeWin(); L.wait(1.1, () => { trapSp.pop(); L.banner = { text: 'JK', sub: 'take the lift up', t: 0, life: 1.8 }; });
       });
     },
   },
@@ -1816,7 +2244,7 @@ const SPECIAL = [
       L.block(21, 0, 1, 3);
       const gate = L.block(21, 3, 1, 12);
       L.gate(gate, 0, -6, () => btn.down, { speed: 8, closeSpeed: 30, color: 'orange' });
-      L.on(() => L.px > 22.5, () => L.wait(0.3, () => { crate.gone = true; L.say('the crate broke'); }));
+      L.on(() => L.px > 22.5, () => L.wait(0.3, () => { crate.gone = true; L.say('the crate broke'); L.wait(1.8, () => { crate.gone = false; }); }));
       const s = L.spike(26, 15, 1, 'up', { hidden: true });
       L.on(() => L.px > 24.2, () => s.pop());
       L.door(29, 15);
@@ -1934,7 +2362,7 @@ const SPECIAL = [
         else if (goAt === null) { goAt = L.t + 1.4; L.say('hop on!'); }
       }, { repeat: true });
       L.on(() => pillar.y < 10, () => { hic = L.t + 0.6; L.say('almost'); });
-      L.gate(pillar, 0, -8.4, () => goAt !== null && L.t >= goAt && L.t >= hic, { speed: 3.5, color: 'green' });
+      L.gate(pillar, 0, -8.4, () => { lie.y = pillar.y; return goAt !== null && L.t >= goAt && L.t >= hic; }, { speed: 3.5, color: 'green' });
       const s = L.spike(22, 6, 2, 'up', { hidden: true });
       L.on(() => L.py < 7 && L.px > 19.5, () => s.pop());
       L.door(29, 6);
@@ -1946,7 +2374,7 @@ const SPECIAL = [
       L.spawn(2, 15);
       L.text(2, 6, 'The floor only holds you once.');
       L.block(0, 15, 6, 3);
-      for (let x = 6; x < 24; x++) L.block(x, 15, 1, 1, { crumble: 0.12 });
+      for (let x = 6; x < 24; x++) L.block(x, 15, 1, 1, { crumble: 0.22 });
       L.block(24, 15, 8, 6);
       L.on(() => L.px > 8, () => L.setRope(1.6));
       L.on(() => L.px > 14, () => L.swapPlaces());
@@ -1969,6 +2397,8 @@ const SPECIAL = [
       L.block(9, 12, 2, 1, { hidden: true });
       L.block(13, 9, 2, 1, { hidden: true });
       L.on(() => L.near(d, 2.2), () => { L.moveDoor(d, 13.4, 9, 25); L.say('nope'); });
+      const fake = L.door(28, 15, { fake: true });
+      L.on(() => L.touch(fake), () => { L.fakeWin(); L.wait(1.1, () => { L.drop(trap, 0); L.banner = { text: 'JK', sub: 'that one was fake', t: 0 }; }); });
     },
   },
   // ---------------------------------------------------------------- levels 11-20 (special/chained, harder)
@@ -2007,12 +2437,12 @@ const SPECIAL = [
         const o = L.players.find((q) => q !== p);
         if (p.y < o.y - 3) { L.yank(o, 0, -11 * L.g); L.say('pull!'); }
       });
-      const s1 = L.spike(10, 11, 1, 'up', { hidden: true });
-      const s2 = L.spike(16, 7, 1, 'up', { hidden: true });
-      L.on(() => L.py < 11 && L.px > 8.5, () => s1.pop());
-      L.on(() => L.py < 7 && L.px > 14.5, () => s2.pop());
+      const s1 = L.spike(12, 11, 1, 'up', { hidden: true });
+      const s2 = L.spike(18, 7, 1, 'up', { hidden: true });
+      L.on(() => L.py < 11 && L.px > 10.5, () => s1.pop());
+      L.on(() => L.py < 7 && L.px > 16.5, () => s2.pop());
       const saw = L.saw(-2, 14.2, 0.8);
-      L.on(() => L.px > 5, () => { saw.vx = 6; });
+      L.on(() => L.px > 5, () => { saw.vx = 4.5; });
       L.door(29, 15);
     },
   },
@@ -2047,9 +2477,10 @@ const SPECIAL = [
       const c1 = L.block(9, 0, 3, 8);
       const c2 = L.block(17, 0, 3, 8);
       const c3 = L.block(25, 0, 3, 8);
-      L.on(() => L.px > 7, () => L.drop(c1, 0.12, { land: true }));
-      L.on(() => L.px > 15, () => L.drop(c2, 0.12, { land: true }));
-      L.on(() => L.px > 23, () => L.drop(c3, 0.12, { land: true }));
+      L.on(() => L.px > 7, () => L.drop(c1, 0.45, { land: true }));
+      L.on(() => L.px > 15, () => L.drop(c2, 0.45, { land: true }));
+      L.on(() => L.px > 23, () => L.drop(c3, 0.45, { land: true }));
+      retract(L, c1); retract(L, c2); retract(L, c3);
       const s1 = L.spike(12, 15, 1, 'up', { hidden: true });
       const s2 = L.spike(20, 15, 1, 'up', { hidden: true });
       L.on(() => L.px > 10.5, () => s1.pop());
@@ -2066,15 +2497,15 @@ const SPECIAL = [
       L.block(11, 15, 5, 3);
       L.block(19, 15, 5, 3);
       L.block(26, 15, 6, 3);
-      L.on(() => L.px > 7, () => { L.swap = true; L.say('controls swapped!'); });
-      L.on(() => L.px > 18, () => { L.swap = false; L.say('swapped back!'); });
-      L.on(() => L.px > 25, () => { L.swap = true; L.say('swapped again!'); });
+      L.on(() => L.px > 4.5, () => { L.swap = true; L.say('controls swapped!'); });
+      L.on(() => L.px > 12.2, () => { L.swap = false; L.say('swapped back!'); });
+      L.on(() => L.px > 20.5, () => { L.swap = true; L.say('swapped again!'); });
       const s1 = L.spike(11, 15, 1, 'up', { hidden: true });
       const s2 = L.spike(19, 15, 1, 'up', { hidden: true });
       L.on(() => L.px > 9.5, () => s1.pop());
       L.on(() => L.px > 17.5, () => s2.pop());
       const saw = L.saw(-2, 14.2, 0.8);
-      L.on(() => L.px > 5, () => { saw.vx = 7; });
+      L.on(() => L.px > 5, () => { saw.vx = 6.5; });
       L.door(30, 15);
     },
   },
@@ -2084,7 +2515,7 @@ const SPECIAL = [
       L.spawn(2, 15);
       L.text(2, 6, 'Crumbling floor and a tightening chain.');
       L.block(0, 15, 5, 3);
-      for (let x = 5; x < 25; x++) L.block(x, 15, 1, 1, { crumble: 0.1 });
+      for (let x = 5; x < 25; x++) L.block(x, 15, 1, 1, { crumble: 0.22 });
       L.block(25, 15, 7, 3);
       L.on(() => L.px > 8, () => L.setRope(2.0));
       L.on(() => L.px > 15, () => { L.swapPlaces(); L.say('swapped!'); });
@@ -2124,7 +2555,7 @@ const SPECIAL = [
       L.spike(8, 17, 8, 'up');
       L.block(16, 15, 16, 3);
       // overhead anchor block
-      L.block(11, 9, 3, 1);
+      L.block(11, 12.2, 3, 1);
       L.on(() => L.px > 7, () => L.setRope(5.5));
       L.on(() => L.all((p) => p.x > 16.5 && p.grounded), () => L.setRope(2.5));
       const s = L.spike(26, 15, 2, 'up', { hidden: true });
@@ -2160,11 +2591,11 @@ const SPECIAL = [
       L.text(2, 5, 'The ultimate chained test. Every trap combined.');
       L.block(0, 15, 6, 3);
       // crumble section with shortening rope
-      for (let x = 6; x < 14; x++) L.block(x, 15, 1, 1, { crumble: 0.1 });
+      for (let x = 6; x < 14; x++) L.block(x, 15, 1, 1, { crumble: 0.14 });
       L.block(14, 15, 4, 3);
       // overhead crusher
       const c = L.block(14, 0, 4, 8);
-      L.on(() => L.px > 12, () => L.drop(c, 0.08, { land: true }));
+      L.on(() => L.px > 12, () => L.drop(c, 0.85, { land: true }));
       // gravity pad section
       L.block(18, 15, 6, 3);
       L.block(18, 0, 6, 3);
@@ -2187,6 +2618,322 @@ const SPECIAL = [
           L.banner = { text: 'JK', sub: 'exit is above on the ledge', t: 0, life: 2 };
         });
       });
+    },
+  },
+  // ---------------------------------------------------------------- levels 21-40 (special/chained, harder)
+  {
+    name: 'Tug of War',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 6, 'Wait together. Move together. The chain has moods.');
+      L.block(0, 15, 32, 3);
+      L.block(9.7, 0, 0.9, 10); L.block(16.7, 0, 0.9, 10); L.block(23.7, 0, 0.9, 10);
+      L.laser(10, 10, 0.3, 5, { on: 0.8, off: 1.1 });
+      L.laser(17, 10, 0.3, 5, { on: 0.8, off: 1.1, phase: 0.45 });
+      L.laser(24, 10, 0.3, 5, { on: 0.8, off: 1.1, phase: 0.9 });
+      L.on(() => L.px > 8, () => L.setRope(1.8));
+      L.on(() => L.px > 15, () => L.setRope(6.0));
+      L.on(() => L.px > 22, () => L.setRope(1.6));
+      trap(L, 27, 15, 1, () => L.px > 25.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Pendulum Pit',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Anchor the edge. Swing your partner across.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 7, 3); L.block(12, 15, 6, 3); L.block(23, 15, 9, 3);
+      L.on(() => L.px > 5, () => L.setRope(5.5));
+      L.on(() => L.all((p) => p.x > 23 && p.grounded), () => L.setRope(2.4));
+      trap(L, 27, 15, 1, () => L.px > 25.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Chain Ladder',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.5, 'Climb together, or drag each other off.');
+      L.block(0, 15, 32, 3);
+      L.block(0, 10, 26, 1); L.block(28, 10, 4, 1);
+      L.block(0, 5, 1.8, 1); L.block(3.3, 5, 28.7, 1);
+      L.ladder(26.4, 9.5, 1.1, 5.5);
+      L.ladder(2.0, 4.5, 1.1, 5.5);
+      trap(L, 14, 15, 1, () => L.px > 12.2);
+      L.on(() => L.py < 10.5, () => L.setRope(2.2));
+      const saw = L.saw(15, 10, 0.7, { buried: true });
+      L.on(() => true, () => { saw.x = 15 + 2 * Math.sin(L.t * 1.8); }, { repeat: true });
+      trap(L, 19, 5, 1, () => L.py < 5.5 && L.px > 17.2);
+      L.door(29.5, 5);
+    },
+  },
+  {
+    name: 'Anchor Drop',
+    build(L) {
+      L.spawn(2, 9);
+      L.text(2, 3, 'Lower your partner onto the switch. Don\'t let go.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 9, 13, 1); L.block(17, 9, 15, 1);
+      L.block(13, 11.8, 4, 1);
+      const b1 = L.button(14.3, 11.8, 1.4, { color: 'green', latch: true });
+      L.block(22, 0, 2, 3);
+      const gate = L.block(22, 3, 2, 6);
+      L.gate(gate, 0, -5, () => b1.down, { speed: 10, color: 'green' });
+      trap(L, 26, 9, 1, () => L.px > 24.5);
+      L.door(29.5, 9);
+    },
+  },
+  {
+    name: 'Bungee Bounce',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 8, 'Short chain on the ceiling. Jump together.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 10, 3); L.block(14, 15, 18, 3);
+      L.block(0, 0, 15, 3); L.block(18, 0, 14, 3);
+      L.pad(7, 15, 2, -1); L.pad(21, 3, 2, 1);
+      L.on(() => L.px > 10, () => L.setRope(2.2));
+      trap(L, 26.5, 15, 1, () => L.g > 0 && L.px > 24.8);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Speed Chain',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Fast AND tied together. Good luck.');
+      L.block(0, 15, 32, 3);
+      L.block(11.7, 0, 0.9, 10); L.block(19.7, 0, 0.9, 10);
+      L.laser(12, 10, 0.3, 5, { on: 0.7, off: 1.1 });
+      L.laser(20, 10, 0.3, 5, { on: 0.7, off: 1.1, phase: 0.4 });
+      L.on(() => L.px > 6 && L.px < 23, () => { L.speedMul = 2.5; L.setRope(2.0); }, { repeat: true });
+      L.on(() => L.speedMul > 1 && L.all((p) => p.x >= 23), () => { L.speedMul = 1; for (const p of L.players) p.vx = Math.min(p.vx, 8); }, { repeat: true });
+      trap(L, 26.5, 15, 1, () => L.px > 24.8);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Snag Alley',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'The chain snags on spikes. Stay tight.');
+      L.block(0, 15, 32, 3);
+      L.on(() => L.px > 6, () => L.setRope(1.4));
+      const saw = L.saw(-2, 14.2, 0.8);
+      L.on(() => L.px > 6, () => { saw.vx = 4.5; });
+      [8, 13, 18].forEach((x) => L.spike(x, 15, 1, 'up'));
+      trap(L, 23, 15, 1, () => L.px > 21.5);
+      trap(L, 27, 15, 1, () => L.px > 25.5);
+      L.door(30, 15);
+    },
+  },
+  {
+    name: 'Crate Tether',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'One box is real. Push it together.');
+      L.block(0, 15, 32, 3);
+      L.crate(6, 15, 1, { mimic: true });
+      L.crate(10, 15);
+      const b1 = L.button(17, 15, 2.0, { color: 'orange' });
+      L.block(22, 0, 2, 3);
+      const gate = L.block(22, 3, 2, 12);
+      L.gate(gate, 0, -7, () => b1.down, { speed: 10, closeSpeed: 24, color: 'orange' });
+      L.on(() => b1.down, () => L.setRope(1.8));
+      trap(L, 26, 15, 1, () => L.px > 24.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Red Light Chain',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.6, 'Stop together on RED. Rules flip halfway.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 10, 3); L.block(12, 15, 8, 3); L.block(22, 15, 10, 3);
+      L.on(() => L.px > 8, () => L.setRope(2.4));
+      trap(L, 26, 15, 1, () => L.px > 24.5);
+      const setGo = redGreen(L);
+      L.on(() => L.px > 16, () => { setGo('red'); L.say('MOVE ON RED'); });
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Elevator Snap',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 4, 'Two ferries. One tight chain.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 6, 3); L.block(18, 15, 4, 3); L.block(26.5, 7.5, 5.5, 1);
+      ferry(L, L.block(6.5, 15, 3.5, 0.6), 14, 15, 4.5, 0.8);
+      ferry(L, L.block(22.5, 14.4, 3.5, 0.6), 22.5, 7.5, 4.5, 0.8);
+      L.on(() => L.py < 9, () => { L.setRope(1.8); L.mirror(); });
+      L.door(29.8, 7.5);
+    },
+  },
+  {
+    name: 'Crusher Chain',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 4, 'Mind the beat. Tight chain ahead.');
+      L.block(0, 15, 32, 3); L.block(7, 0, 19, 7);
+      [8, 13, 18, 23].forEach((x, i) => {
+        const c = L.block(x, 7, 2, 5);
+        L.gate(c, 0, 3, () => (L.t + i * 0.45) % 1.8 < 0.55, { speed: 24, closeSpeed: 8 });
+      });
+      L.on(() => L.px > 6, () => L.setRope(1.8));
+      trap(L, 27, 15, 1, () => L.px > 25.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Double Invert',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Inverted. Then swapped. Then normal.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 6, 3); L.block(8, 15, 8, 3); L.block(18, 15, 8, 3); L.block(28, 15, 4, 3);
+      L.on(() => L.px > 4.5, () => { L.invert = true; L.say('inverted!'); });
+      L.on(() => L.px > 14.5, () => { L.swap = true; L.say('and swapped!'); });
+      L.on(() => L.px > 24.5, () => { L.invert = false; L.say('only swapped'); });
+      trap(L, 12, 15, 1, () => L.px > 10.5);
+      trap(L, 22, 15, 1, () => L.px > 20.5);
+      L.door(30, 15);
+    },
+  },
+  {
+    name: 'Head Haul',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 4, 'Boost, haul, and ignore the fake.');
+      L.block(0, 15, 10, 3); L.block(10, 11.2, 8, 6.8); L.block(18, 7.4, 14, 10.6);
+      const fake = L.door(23, 7.4, { fake: true });
+      const ftrap = L.spike(22, 7.4, 3, 'up', { hidden: true });
+      L.on(() => L.touch(fake), () => { ftrap.pop(); L.banner = { text: 'FAKE', sub: '', t: 0, life: 1.4 }; });
+      trap(L, 26.5, 7.4, 1, () => L.py < 8 && L.px > 24.8);
+      L.door(29.8, 7.4);
+    },
+  },
+  {
+    name: 'Glass Chain',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Fake floor below. Hidden glass above.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 6, 3);
+      L.block(8, 15, 4, 1, { solid: false }); L.block(15, 15, 4, 1, { solid: false });
+      L.block(7.5, 13, 3, 0.6, { hidden: true }); L.block(13, 11.5, 3, 0.6, { hidden: true }); L.block(18.5, 13, 3, 0.6, { hidden: true });
+      L.block(24, 15, 8, 3);
+      L.on(() => L.px > 7, () => L.setRope(2.2));
+      trap(L, 27, 15, 1, () => L.px > 25.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Gravity Zigzag',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 8, 'Floor, roof, floor, roof. Stay chained.');
+      L.block(0, 15, 32, 3); L.block(0, 0, 32, 3);
+      L.pad(6, 15, 2, -1); L.spike(11, 3, 1.5, 'down');
+      L.pad(16, 3, 2, 1); L.spike(20, 15, 1.5, 'up');
+      L.pad(23.5, 15, 2, -1);
+      L.on(() => L.px > 8, () => L.setRope(2.0));
+      trap(L, 26.5, 3, 1, () => L.g < 0 && L.px > 24.8, 'down');
+      L.door(29.5, 4.6);
+    },
+  },
+  {
+    name: 'Saw Sandwich II',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Wait on the perch. Watch for the swap.');
+      L.block(0, 15, 32, 3); L.block(13.5, 12.2, 5, 0.6);
+      const sawL = L.saw(-2, 14.2, 0.8), sawR = L.saw(34, 14.2, 0.8);
+      L.on(() => L.px > 7, () => { sawL.vx = 5.5; sawR.vx = -5.5; });
+      L.on(() => L.py < 12.2 && L.all((p) => p.grounded), () => L.swapPlaces());
+      trap(L, 25, 15, 1.5, () => L.px > 23);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Lag Tether',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Crumbling bridges with 0.18 s jump lag.');
+      L.jumpDelay = 0.18;
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 7, 3);
+      for (let x = 7; x < 13; x++) L.block(x, 15, 1, 1, { crumble: 0.25 });
+      L.block(13, 15, 6, 3);
+      for (let x = 19; x < 25; x++) L.block(x, 15, 1, 1, { crumble: 0.25 });
+      L.block(25, 15, 7, 3);
+      L.on(() => L.px > 8, () => L.setRope(2.0));
+      L.on(() => L.px > 25, () => { L.jumpDelay = 0; L.say('lag cleared!'); });
+      trap(L, 15.5, 15, 1, () => L.px > 14);
+      trap(L, 27.5, 15, 1, () => L.px > 26);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Flip Chase',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 5, 'Outrun the saw while the camera goes wild.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 9, 3); L.block(11, 15, 6, 3); L.block(19, 15, 6, 3); L.block(27, 15, 5, 3);
+      const saw = L.saw(-2, 14.2, 0.8);
+      L.on(() => L.px > 5, () => { saw.vx = 6.2; });
+      L.on(() => L.px > 10, () => L.mirror());
+      L.on(() => L.px > 19, () => { L.mirror(false); L.flipView(); L.setRope(2.0); });
+      trap(L, 22, 15, 1, () => L.px > 20.5);
+      L.door(29.8, 15);
+    },
+  },
+  {
+    name: 'Rising Tether',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.5, 'Three tiers up. Beat the rising beam.');
+      L.block(0, 15, 27, 3); L.block(28, 12.5, 4, 0.6);
+      L.block(4, 9.5, 23, 1); L.block(0, 7, 3, 0.6);
+      L.block(5, 4.5, 27, 1);
+      const lava = L.laser(0, 18.5, 32, 0.3, { on: 1e9, off: 1 });
+      L.on(() => true, () => { lava.y = Math.max(-1, 18.5 - Math.max(0, L.t - 2) * 0.5); }, { repeat: true });
+      L.spike(14, 15, 1.5, 'up');
+      trap(L, 15, 9.5, 1.5, () => L.py < 10 && L.px < 17);
+      L.on(() => L.py < 10, () => L.setRope(2.4));
+      L.block(17.7, 0, 0.9, 1.5);
+      L.laser(18, 1.5, 0.3, 3, { on: 0.7, off: 1.1 });
+      trap(L, 24, 4.5, 1, () => L.py < 5 && L.px > 22.2);
+      L.door(29.5, 4.5);
+    },
+  },
+  {
+    name: 'Bound Forever',
+    build(L) {
+      L.spawn(2, 15);
+      L.text(2, 2.6, 'Final chained exam. Everything goes wrong.');
+      L.spike(0, 18, 32, 'up');
+      L.block(0, 15, 10, 3);
+      L.block(5.2, 0, 0.9, 10);
+      L.laser(5.5, 10, 0.3, 5, { on: 0.7, off: 1.0 });
+      L.pad(8, 15, 1.5, -1);
+      L.block(7, 0, 11, 3); L.spike(12.5, 3, 1, 'down'); L.pad(15.5, 3, 1.5, 1);
+      L.block(15, 15, 3, 3);
+      for (let x = 18; x < 23; x++) L.block(x, 15, 1, 1, { crumble: 0.24 });
+      L.block(23, 15, 9, 3);
+      L.on(() => L.px > 18, () => L.setRope(1.8));
+      L.on(() => L.px > 20, () => L.swapPlaces());
+      const fake = L.door(29.5, 15, { fake: true });
+      const ftrap = L.spike(24, 15, 8, 'up', { hidden: true });
+      L.on(() => L.touch(fake), () => { ftrap.pop(); L.banner = { text: 'JK', sub: 'climb up!', t: 0, life: 1.8 }; });
+      L.block(25.0, 12.5, 2.2, 0.6, { hidden: true });
+      L.block(27.3, 10, 2.2, 0.6, { hidden: true });
+      L.block(29.5, 7.5, 2.5, 0.6);
+      L.door(30.2, 7.5);
     },
   },
 ];

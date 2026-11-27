@@ -45,40 +45,87 @@
   // single-player keys stay numeric so old saves keep their per-level death counts
   const dkey = (mode, idx) => (mode === 'single' ? String(idx) : `${mode}:${idx}`);
 
-  const DEATH_LINES = [
-    'skill issue', 'did you even look?', 'the floor was lava. sort of.', 'classic.',
-    'that was on purpose, right?', 'again!', 'we saw that.', 'so close. not really.',
-    'have you tried not dying?', 'trust no tile.', 'muscle memory: 0', 'press R to cope',
-    'ouch.', 'the level says hi.', 'bold strategy.', 'noted for the highlight reel.',
-    'that one was mean, sorry. (not sorry)', 'gravity: 1, you: 0', 'certified rage moment',
-  ];
-  const TEAM_LINES = [
-    'blame your partner.', 'teamwork makes the dream... die.', 'friendship ended.',
-    'who was that?', 'that was NOT a team effort.', 'you both lose. together.',
-  ];
-  // {v} = victim, {o} = the other player
-  const BLAME_LINES = [
-    '{o}, this is on you.', '{v} is the weak link.', '{o} saw that coming.', '{v} trusted {o}. mistake.',
-    'carried by {o}? not today.', '{v} needs a new partner.', '{o} is typing an apology...',
-  ];
+  // Death messages, one pool per way of dying (see deathKind). {o} = the other player in 2-player modes.
+  const DEATH = {
+    spikes: ['spikes. the pointy end is the bad end.', 'you found the spikes. face first.', 'those spikes were right there.', 'walked onto spikes. on purpose?'],
+    ceiling: ['ceiling spikes. you jumped right in.', 'look up. the spikes were.', 'headbutted the spikes. spikes won.'],
+    popped: ['those spikes were not there a second ago.', 'the floor grew teeth.', 'surprise spikes!', 'hidden spikes. trust no tile.'],
+    saw: ['walked into a saw. it was just sitting there.', 'the saw did not even have to move.', 'you hugged a saw blade.'],
+    sawMoving: ['the saw came for you.', 'outrun by a saw blade.', 'that saw had somewhere to be. so did you.'],
+    sawBuried: ['the saw was hiding in the wall.', 'it came out of the wall. walls do that here.'],
+    laser: ['that laser was already on.', 'walked into a glowing beam. bold.', 'the beam was on. it is still on.'],
+    laserOn: ['the laser switched on. you were in it.', 'watch the beam blink. then go.', 'bad timing. well done, knight.'],
+    fell: ['the pit was not a shortcut.', 'you jumped into a hole.', 'gravity: 1, you: 0', 'missed the ledge. by a lot.'],
+    fellUp: ['you fell UP. impressive.', 'gravity flipped. you did not.', 'off into the sky. bye.'],
+    fakeFloor: ['that floor was fake.', 'not every block is a block.', 'you stood on a floor that was not there.'],
+    crumble: ['the floor dropped out from under you.', 'that ledge gave up before you did.', 'the floor left. you followed.'],
+    other: ['the level got you.', 'that one was mean. sorry. (not sorry)'],
+    crushFall: ['a block fell on you. look up next time.', 'flattened by falling stone.', 'the ceiling came down. on you.'],
+    crushGate: ['the gate closed on you.', 'caught in the gate. the gate won.'],
+    crusher: ['you stood under the big heavy thing.', 'the crusher crushed. as advertised.', 'flattened. pancake knight.'],
+    crushCrate: ['squished by a crate. a CRATE.', 'crate: 1, knight: 0'],
+    crushed: ['squished between the walls.', 'the walls closed in. so did you.', 'pinned between two blocks.'],
+    mimic: ['that was not a crate.', 'the crate bit you.', 'you touched a mimic. it touched back.'],
+    redLight: ['you moved on red.', 'red means stop.', 'it said stop. it SAW that.'],
+    restart: ['pressed R. respect.', 'self-destruct. clean.', 'starting over. wise.'],
+    chainFell: ['you both went down. together.', 'til death do you part. so, now.', 'chained to dead weight.'],
+    chainDropped: ['{o} could not hold you.', '{o} let you dangle. then drop.'],
+  };
+  // what the streak line calls each killer, when the same thing gets you 3+ times in a row
+  const KILLER = {
+    spikes: 'spikes', ceiling: 'ceiling spikes', popped: 'hidden spikes', saw: 'saw', sawMoving: 'saw', sawBuried: 'saw',
+    laser: 'laser', laserOn: 'laser', fell: 'pit', fellUp: 'sky', fakeFloor: 'fake floor', crumble: 'falling floor',
+    crushFall: 'falling block', crushGate: 'gate', crusher: 'crusher', crushCrate: 'crate', crushed: 'walls', mimic: 'mimic', redLight: 'red light',
+    chainFell: 'chain', chainDropped: 'chain',
+  };
   const MOCK_LINES = [
     '{l} died {n} times. {w} did the work.', '{w} carried. {l} was luggage.', '{l}: {n} deaths. legendary.',
     '{l} should hold the controller the right way up.', '{w} would like a refund on {l}.',
   ];
-  const CHAIN_LINES = ['you dragged them, didn\'t you', 'til death do you part. so, now.', 'dead weight.'];
 
   // ---------------------------------------------------------------- save data
-  const SAVE_KEY = 'ragebait.save.v1';
-  const save = (() => {
-    const def = { unlocked: 1, deaths: 0, levelDeaths: {}, muted: false };
+  // Each knight (profile) has its own save. Knight 0 keeps the original key, so old saves become the first knight.
+  const SAVE_KEY = 'ragebait.save.v1', KNIGHTS_KEY = 'ragebait.knights.v1', MAX_KNIGHTS = 8;
+  const saveKey = (id) => (id ? `${SAVE_KEY}:${id}` : SAVE_KEY);
+  function loadSave(id) {
+    const def = { unlocked: 1, deaths: 0, levelDeaths: {}, muted: false, calm: false };   // calm: reduce flashing
     let s;
-    try { s = Object.assign(def, JSON.parse(localStorage.getItem(SAVE_KEY)) || {}); }
+    try { s = Object.assign(def, JSON.parse(localStorage.getItem(saveKey(id))) || {}); }
     catch (e) { s = def; }
     s.progress = Object.assign({ single: s.unlocked || 1, multi: 1, special: 1 }, s.progress || {});
     s.shame = Object.assign({ multi: [0, 0], special: [0, 0] }, s.shame || {});
+    // best: furthest level ever reached per mode (strikes can take progress away, never this). course length + 1 = beaten
+    s.best = Object.assign({ ...s.progress }, s.best || {});
+    s.causes = s.causes || {};   // deaths by cause, for each knight's nemesis on the leaderboard
     return s;
+  }
+  const knights = (() => {
+    let k = null;
+    try { k = JSON.parse(localStorage.getItem(KNIGHTS_KEY)); } catch (e) { /* ignore */ }
+    return k && k.list && k.list.length ? k : { cur: 0, next: 1, list: [{ id: 0, name: 'KNIGHT' }] };
   })();
-  function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* ignore */ } }
+  const save = loadSave(knights.cur);
+  function persist() { try { localStorage.setItem(saveKey(knights.cur), JSON.stringify(save)); } catch (e) { /* ignore */ } }
+  function persistKnights() { try { localStorage.setItem(KNIGHTS_KEY, JSON.stringify(knights)); } catch (e) { /* ignore */ } }
+  const knightName = () => (knights.list.find((k) => k.id === knights.cur) || knights.list[0]).name;
+  // swap the live save object's contents, so everything holding `save` sees the new knight
+  function useKnight(id) {
+    knights.cur = id; persistKnights();
+    for (const key of Object.keys(save)) delete save[key];
+    Object.assign(save, loadSave(id));
+  }
+  function addKnight(name) {
+    const id = knights.next++;
+    knights.list.push({ id, name });
+    useKnight(id); persist();
+  }
+  function deleteKnight(id) {
+    if (knights.list.length < 2) return false;
+    knights.list = knights.list.filter((k) => k.id !== id);
+    try { localStorage.removeItem(saveKey(id)); } catch (e) { /* ignore */ }
+    if (knights.cur === id) useKnight(knights.list[0].id); else persistKnights();
+    return true;
+  }
   // admin panel settings: session only, never saved
   const admin = { unlock: false, god: false, speed: 1, mode: 0, sel: 0, confirmReset: false, back: 'title' };
 
@@ -117,6 +164,103 @@
     reveal: () => tone(880, 0.08, 'triangle', 0.06, 200),
     click: () => tone(600, 0.04, 'square', 0.03),
   };
+
+  // ---------------------------------------------------------------- music: a tiny chiptune sequencer
+  // Each channel is bars of 16 steps (sixteenth notes): a note ('c#4'), '.' rest, '-' hold the last note.
+  // Channels loop on their own lengths, so a 1-bar drum loop runs under a 4-bar melody.
+  const SONGS = {
+    title: { bpm: 96,
+      lead: ['d4 - - . a3 - d4 - f4 - - . e4 - d4 -', 'c4 - - . a3 - c4 - e4 - - . d4 - c4 -', 'a#3 - - . f3 - a#3 - d4 - - . c4 - a#3 -', 'a3 - - - c#4 - - - e4 - - - a4 - - -'],
+      bass: ['d2 . d2 . d2 . d2 . d2 . d2 . d2 . d2 .', 'c2 . c2 . c2 . c2 . c2 . c2 . c2 . c2 .', 'a#1 . a#1 . a#1 . a#1 . a#1 . a#1 . a#1 . a#1 .', 'a1 . a1 . a1 . a1 . a1 . a1 . a1 . a1 .'],
+      drums: ['k . . . s . . . k . k . s . . h'] },
+    area0: { bpm: 120,   // the upper halls: brisk, almost friendly
+      lead: ['a4 . e4 . a4 . b4 . c5 . b4 . a4 . e4 .', 'f4 . c4 . f4 . g4 . a4 . g4 . f4 . e4 .', 'd4 . a3 . d4 . e4 . f4 . e4 . d4 . c4 .', 'e4 . b3 . e4 . g#4 . b4 - - - . . . .'],
+      bass: ['a2 . a3 . a2 . a3 . a2 . a3 . a2 . a3 .', 'f2 . f3 . f2 . f3 . f2 . f3 . f2 . f3 .', 'd2 . d3 . d2 . d3 . d2 . d3 . d2 . d3 .', 'e2 . e3 . e2 . e3 . e2 . e3 . e2 . e3 .'],
+      drums: ['k . h . s . h . k . k . s . h h'] },
+    area1: { bpm: 84,    // the crypt: sparse, a tritone, a bell
+      lead: ['e4 - - - . . . . g4 - - - f#4 - - -', 'e4 - - - . . . . a#4 - - - - - - -', 'b3 - - - . . . . d4 - - - c4 - - -', 'b3 - - - - - - - . . . . . . . .'],
+      bass: ['e2 - - - - - - - - - - - - - - -', 'c2 - - - - - - - b1 - - - - - - -'],
+      arp: ['e5 . . . g5 . . . b5 . . . g5 . . .'],
+      drums: ['k . . . . . . . . . h . . . . .'] },
+    area2: { bpm: 100,   // the flooded depths: drips
+      lead: ['f#4 - - - - - . . a4 - - - g#4 - - -', 'e4 - - - - - - - . . . . . . . .', 'd4 - - - - - . . f#4 - - - e4 - - -', 'c#4 - - - - - - - . . . . . . . .'],
+      arp: ['f#5 . c#5 . a4 . c#5 . f#5 . c#5 . a4 . c#5 .', 'e5 . b4 . g#4 . b4 . e5 . b4 . g#4 . b4 .', 'd5 . a4 . f#4 . a4 . d5 . a4 . f#4 . a4 .', 'c#5 . g#4 . f4 . g#4 . c#5 . g#4 . f4 . g#4 .'],
+      bass: ['f#2 . . . . . f#2 . e2 . . . . . e2 .', 'd2 . . . . . d2 . c#2 . . . . . c#2 .'],
+      drums: ['k . . h . . s . . h k . . . s .'] },
+    area3: { bpm: 140,   // the molten core: driving
+      lead: ['c4 - - . d#4 - - . g4 - - . f4 - d#4 -', 'd4 - - . c4 - - . b3 - - - g3 - - -'],
+      bass: ['c2 c2 c3 c2 c2 c3 c2 c3 c2 c2 c3 c2 d#2 d#3 f2 f3', 'g#1 g#1 g#2 g#1 g#1 g#2 g#1 g#2 g1 g1 g2 g1 g1 g2 b1 b2'],
+      drums: ['k . h k s . h . k k h . s . s s'] },
+    ending: { bpm: 80,   // the treasure room: something's wrong
+      lead: ['a3 - - - a#3 - - - a3 - - - a#3 - - -'],
+      bass: ['a1 - - - - - - - a1 - - - - - - -'],
+      drums: ['k . . . . . . . k . . . . . . .'] },
+    win: { bpm: 120,
+      lead: ['c5 . c5 . c5 . g4 . a4 - - . c5 - e5 -', 'd5 - - - - - . . c5 - - - - - - -'],
+      bass: ['c3 . g2 . c3 . g2 . f2 . c3 . f2 . c3 .', 'g2 . d3 . g2 . d3 . c3 . g2 . c3 . g2 .'],
+      drums: ['k . h . s . h . k . h . s . s s'] },
+  };
+  const midi = (n) => { const m = /^([a-g])(#?)(\d)$/.exec(n); return 12 * (+m[3] + 1) + 'c d ef g a b'.indexOf(m[1]) + (m[2] ? 1 : 0); };
+  // a channel's bars -> [{ note, len } | null] per step
+  function track(bars) {
+    const steps = bars.join(' ').trim().split(/\s+/), out = steps.map(() => null);
+    let last = -1;
+    steps.forEach((tok, i) => {
+      if (tok === '-') { if (last >= 0) out[last].len++; return; }
+      if (tok === '.') { last = -1; return; }
+      out[i] = { note: tok, len: 1 }; last = i;
+    });
+    if (steps.length % 16) console.warn('song channel is not whole bars:', steps.length);
+    return out;
+  }
+  const PARSED = {};
+  const song = (id) => PARSED[id] || (PARSED[id] = { bpm: SONGS[id].bpm, ch: ['lead', 'bass', 'arp', 'drums'].filter((k) => SONGS[id][k]).map((k) => ({ k, steps: track(SONGS[id][k]) })) });
+  let musicOut = null, noiseBuf = null;
+  function voice(type, freq, t0, dur, vol) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(vol, t0); g.gain.setValueAtTime(vol, t0 + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(musicOut); o.start(t0); o.stop(t0 + dur + 0.02);
+    return o;
+  }
+  function drum(kind, t0) {
+    if (kind === 'k') { const o = voice('sine', 130, t0, 0.14, 0.32); o.frequency.exponentialRampToValueAtTime(40, t0 + 0.12); return; }
+    const src = actx.createBufferSource(), g = actx.createGain(), hp = actx.createBiquadFilter();
+    src.buffer = noiseBuf; hp.type = 'highpass'; hp.frequency.value = kind === 'h' ? 7000 : 1500;
+    const dur = kind === 'h' ? 0.03 : 0.1, vol = kind === 'h' ? 0.05 : 0.12;
+    g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(hp).connect(g).connect(musicOut); src.start(t0); src.stop(t0 + dur + 0.02);
+  }
+  const VOICE = { lead: ['square', 0.03], bass: ['triangle', 0.09], arp: ['square', 0.014] };
+  const music = {
+    id: null, step: 0, next: 0,
+    want(id) {
+      if (id === this.id) return;
+      this.id = id; this.step = 0; if (actx) this.next = actx.currentTime + 0.05;
+    },
+    // schedule notes a little ahead of the audio clock (setInterval alone is too jittery to play on)
+    tick() {
+      if (!actx || !this.id || save.muted || actx.state !== 'running') { if (actx) this.next = actx.currentTime + 0.05; return; }
+      if (!musicOut) {
+        musicOut = actx.createGain(); musicOut.gain.value = 0.7; musicOut.connect(actx.destination);
+        noiseBuf = actx.createBuffer(1, actx.sampleRate * 0.2, actx.sampleRate);
+        const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      const S = song(this.id), dt = 60 / S.bpm / 4;
+      if (this.next < actx.currentTime - 0.2) this.next = actx.currentTime + 0.05;   // tab was asleep: don't catch up
+      while (this.next < actx.currentTime + 0.15) {
+        for (const c of S.ch) {
+          const n = c.steps[this.step % c.steps.length];
+          if (!n) continue;
+          if (c.k === 'drums') { for (const k of n.note) drum(k, this.next); continue; }
+          const [type, vol] = VOICE[c.k];
+          voice(type, 440 * 2 ** ((midi(n.note) - 69) / 12), this.next, dt * n.len * (c.k === 'arp' ? 0.6 : 0.95), vol);
+        }
+        this.step++; this.next += dt;
+      }
+    },
+  };
+  setInterval(() => music.tick(), 30);
 
   // ---------------------------------------------------------------- helpers
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -202,6 +346,8 @@
         if (edge('ok')) onKey('Enter');
         else if (edge('back')) onKey('Escape');
         else if (edge('aux') && game.state === 'mode') onKey('KeyL');
+        else if (edge('sel') && game.state === 'mode') onKey('KeyP');
+        else if (edge('aux') && game.state === 'knights') onKey('KeyE');
       }
       padPrev[idx] = cur;
     });
@@ -209,6 +355,14 @@
   }
   addEventListener('keydown', (e) => {
     audioOn();
+    if (game.state === 'name') {   // typing: keys are letters here, not controls
+      e.preventDefault();
+      if (e.key === 'Backspace') { game.name = game.nameFresh ? '' : game.name.slice(0, -1); game.nameFresh = false; }
+      else if (e.key.length === 1 && /[a-z0-9 ._'-]/i.test(e.key) && (game.nameFresh || game.name.length < NAME_MAX)) {
+        game.name = (game.nameFresh ? '' : game.name) + e.key.toUpperCase(); game.nameFresh = false;
+      } else if (!e.repeat && (e.code === 'Enter' || e.code === 'Escape')) onKey(e.code);
+      return;
+    }
     const k = KEYMAP[e.code];
     if (k) {
       if (!down.has(e.code)) { down.add(e.code); if (k === 'jump') pressed[owner(e.code)].add('jump'); }
@@ -227,11 +381,12 @@
     const on = (e) => {
       e.preventDefault(); audioOn(); btn.classList.add('on');
       if (k === 'restart') { onKey('KeyR'); return; }
+      if (k === 'menu') { onKey('Escape'); return; }
       if (!touch[k] && k === 'jump') pressed[0].add('jump');
       touch[k] = true; syncCtl();
       if (k === 'jump' && game.state !== 'play') onKey('Enter');
     };
-    const off = (e) => { e.preventDefault(); btn.classList.remove('on'); if (k !== 'restart') { touch[k] = false; syncCtl(); } };
+    const off = (e) => { e.preventDefault(); btn.classList.remove('on'); if (k !== 'restart' && k !== 'menu') { touch[k] = false; syncCtl(); } };
     btn.addEventListener('pointerdown', on);
     btn.addEventListener('pointerup', off);
     btn.addEventListener('pointercancel', off);
@@ -325,7 +480,7 @@
       const L = this;
       const s = {
         kind: 'spike', x, y, w, dir, fake: !!o.fake, out: o.hidden ? 0 : 1, target: o.hidden ? 0 : 1,
-        pop() { if (s.target !== 1) { s.target = 1; sfx.pop(); L.shake(0.08, 0.08); } },
+        pop() { if (s.target !== 1) { s.target = 1; s.popT = L.t; sfx.pop(); L.shake(0.08, 0.08); } },
         hide() { s.target = 0; }
       };
       this.spikes.push(s); return s;
@@ -446,7 +601,7 @@
           const toucher = ps.find((p) => overlap(p, zone));
           if (!b.armed && toucher) { b.armed = this.t; sfx.trap(); this.cur = toucher; this.say('that is not a crate'); }
           if (b.armed && !b.spiky && this.t - b.armed > 0.25) { b.spiky = true; sfx.pop(); }
-          if (b.spiky && toucher) this.kill(toucher, 'mimic');
+          if (b.spiky && toucher) this.kill(toucher, 'mimic', b);
           if (b.armed && this.t - b.armed > 1.75) { b.gone = true; burst(b.x + b.w / 2, b.y + b.h / 2, C.crate, 20, 6); }
         }
         if (b.flash > 0) b.flash -= dt;
@@ -484,7 +639,7 @@
           if (Math.abs(b.dy) >= Math.abs(b.dx)) { p.y = b.dy > 0 ? b.y + b.h : b.y - p.h; p.vy = b.vy || 0; }
           else p.x = b.dx > 0 ? b.x + b.w : b.x - p.w;
           for (const o of this.blocks) {
-            if (o !== b && solid(o) && overlap(p, o)) { this.kill(p, 'crushed'); break; }
+            if (o !== b && solid(o) && overlap(p, o)) { this.kill(p, 'crushed', b); break; }
           }
           if (this.over) break;
         }
@@ -557,7 +712,8 @@
       const foot0 = g > 0 ? p.y + p.h : p.y;
       p.y += p.vy * dt;
       for (const b of this.blocks) {
-        if (!solid(b) || !overlap(p, b)) continue;
+        if (!overlap(p, b)) continue;
+        if (!solid(b)) { if (!b.gone && !b.hidden && !b.ghost) p.fakeT = this.t; continue; }   // fell through a block that looked solid
         this.reveal(b);
         if (p.vy > 0) p.y = b.y - p.h; else if (p.vy < 0) p.y = b.y + b.h;
         if (p.vy * g > 0) { p.grounded = true; p.ground = b; }
@@ -575,6 +731,7 @@
         }
       }
       p.lastDx = p.x - x0;
+      if (p.ground) { p.lastGround = p.ground; p.groundT = this.t; }
       if (p.grounded && !was) { p.sx = 1.25; p.sy = 0.78; p.jumping = false; }
       p.sx = approach(p.sx, 1, dt * 4); p.sy = approach(p.sy, 1, dt * 4);
     }
@@ -650,12 +807,12 @@
     }
 
     checkContacts(p) {
-      for (const s of this.spikes) if (!s.fake && s.out > 0.6 && overlap(p, spikeBox(s))) return this.kill(p, 'spikes');
+      for (const s of this.spikes) if (!s.fake && s.out > 0.6 && overlap(p, spikeBox(s))) return this.kill(p, 'spikes', s);
       for (const s of this.saws) {
         const cx = clamp(s.x, p.x, p.x + p.w), cy = clamp(s.y, p.y, p.y + p.h);
-        if (Math.hypot(s.x - cx, s.y - cy) < s.r * 0.82) return this.kill(p, 'saw');
+        if (Math.hypot(s.x - cx, s.y - cy) < s.r * 0.82) return this.kill(p, 'saw', s);
       }
-      for (const l of this.lasers) if (l.live && overlap(p, l)) return this.kill(p, 'laser');
+      for (const l of this.lasers) if (l.live && overlap(p, l)) return this.kill(p, 'laser', l);
       if (p.y > ROWS + 1 || p.y < -3) return this.kill(p, 'fell');
       for (const pd of this.pads) {
         if (this.g !== pd.g && overlap(p, padBox(pd))) {
@@ -677,13 +834,16 @@
       }
     }
 
-    kill(p = this.active()[0], cause = 'restart') {
+    kill(p = this.active()[0], cause = 'restart', src = null) {
       if (this.over || !p) return;
       if (admin.god && cause !== 'fell' && cause !== 'restart') return;
       this.over = true; this.victim = p; this.cause = cause;
+      const kind = this.deathKind(p, cause, src);
+      this.kind = kind;
       save.deaths++;
       const dk = dkey(this.mode.id, this.idx);
       save.levelDeaths[dk] = (save.levelDeaths[dk] || 0) + 1;
+      if (kind !== 'restart') save.causes[kind] = (save.causes[kind] || 0) + 1;
       persist();
       // one dies, everyone restarts
       for (const q of this.players) {
@@ -694,22 +854,45 @@
       }
       this.shake(0.3, 0.4);
       sfx.die();
+      // the same killer 3+ times running on this level gets a streak line instead
+      const sk = `${dk}|${kind}`;
+      game.streak = game.streak && game.streak.k === sk ? { k: sk, n: game.streak.n + 1 } : { k: sk, n: 1 };
+      const o = this.mode.players > 1 ? SKINS[1 - p.idx].name : '';
+      let line = game.streak.n >= 3 && KILLER[kind]
+        ? pick([`the ${KILLER[kind]} again. that is ${game.streak.n} in a row.`, `${game.streak.n} times. same ${KILLER[kind]}.`])
+        : pick(DEATH[kind]).replace(/\{o\}/g, o);
       if (this.mode.players === 1) {
-        game.message = { text: pick(DEATH_LINES), t: 0 };
+        game.message = { text: line, t: 0 };
         this.wait(0.75, () => game.restart());
         return;
       }
-      // 2-player modes: blame, shame stats, strikes
-      const v = SKINS[p.idx].name, o = SKINS[1 - p.idx].name;
+      // 2-player modes: name the victim, shame stats, strikes
       save.shame[this.mode.id][p.idx]++; persist();
       game.runDeaths[p.idx]++;
       game.strikes++;
-      const r = Math.random();
-      const line = r < 0.4 ? pick(BLAME_LINES).replace(/\{v\}/g, v).replace(/\{o\}/g, o)
-        : `${v}: ${pick(this.chained && r < 0.7 ? CHAIN_LINES : r < 0.85 ? TEAM_LINES : DEATH_LINES)}`;
-      game.message = { text: line, t: 0 };
+      game.message = { text: `${SKINS[p.idx].name}: ${line}`, t: 0 };
       if (game.strikes >= STRIKES) this.wait(0.9, () => game.strikeOut());
       else this.wait(0.75, () => game.restart());
+    }
+
+    // which DEATH pool fits: looks at the thing that killed p (src) and how p got there
+    deathKind(p, cause, src) {
+      const t = this.t, g = p.lastGround;
+      // a floor that let you through is the real troll, whatever was waiting underneath
+      if (cause === 'spikes' || cause === 'saw' || cause === 'laser' || (cause === 'fell' && !this.chained)) {
+        if (p.fakeT !== undefined && t - p.fakeT < 1.5) return 'fakeFloor';
+        if (!p.grounded && g && t - p.groundT < 1.5 && (g.falling || g.gone)) return 'crumble';
+      }
+      if (cause === 'spikes') return src && src.popT !== undefined && t - src.popT < 1.5 ? 'popped' : src && src.dir === 'down' ? 'ceiling' : 'spikes';
+      if (cause === 'saw') return src && src.buried ? 'sawBuried' : src && (src.vx || src.vy || src.goal || src.dir) ? 'sawMoving' : 'saw';
+      if (cause === 'laser') return src && (t + src.phase) % (src.on + src.off) < 0.2 ? 'laserOn' : 'laser';
+      if (cause === 'crushed') return !src ? 'crushed' : src.crate ? 'crushCrate' : src.falling ? 'crushFall' : src.link ? 'crushGate' : src.dy > 0 ? 'crusher' : 'crushed';
+      if (cause === 'red light') return 'redLight';
+      if (cause === 'fell') {
+        if (this.chained) { const o = this.players.find((q) => q !== p); return o && o.grounded ? 'chainDropped' : 'chainFell'; }
+        return p.y < 0 ? 'fellUp' : 'fell';
+      }
+      return DEATH[cause] ? cause : 'other';
     }
 
     win() {
@@ -727,6 +910,7 @@
       const p = this.cur;
       burst(p.x + p.w / 2, p.y + p.h / 2, C.portal, 40, 10);
       const prog = save.progress;
+      if (!admin.unlock) save.best[this.mode.id] = Math.max(save.best[this.mode.id] || 1, Math.min(course(this.mode.id).length + 1, this.idx + 2));
       if (!admin.unlock && this.idx + 2 > prog[this.mode.id]) { prog[this.mode.id] = Math.min(course(this.mode.id).length, this.idx + 2); persist(); }
       this.wait(this.mode.players > 1 ? 1.8 : 1.0, () => game.next());
     }
@@ -734,7 +918,9 @@
 
   // ---------------------------------------------------------------- game state
   const game = {
-    state: 'title', // title | mode | select | play | end
+    state: 'title', // title | mode | select | play | end | knights | name | admin | cutscene
+    tSel: 0, oSel: 0, exitT: -9,   // title button, settings row, when EXIT was pressed
+    kTab: 0, kId: 0, kBack: 'title', kConfirm: null, kNote: '', name: '', nameFresh: false, nameFor: null,   // knights screen
     mode: 'single', modeSel: 0,
     level: null, idx: 0, sel: 0, scrollY: 0, targetScrollY: 0, message: null, time: 0, strikes: 0, runDeaths: [0, 0],
     reached() { return Math.min(save.progress[this.mode] || 1, course(this.mode).length); },
@@ -789,11 +975,50 @@
   function onKey(code) {
     const go = code === 'Enter' || code === 'Space' || code === 'KeyZ';
     if (code === 'KeyM') { save.muted = !save.muted; persist(); return; }
+    if (code === 'KeyF' && (game.state === 'title' || game.state === 'mode' || game.state === 'settings')) { save.calm = !save.calm; persist(); sfx.click(); return; }
     if (code === 'Backquote' && (game.state === 'title' || game.state === 'mode')) {
       sfx.click(); admin.back = game.state; game.state = 'admin'; return;
     }
+    if (code === 'KeyP' && (game.state === 'title' || game.state === 'mode')) { sfx.click(); openKnights(); return; }
     if (game.state === 'title') {
-      if (go) { sfx.click(); game.state = 'mode'; }
+      const n = TITLE_BTNS.length, was = game.tSel;
+      if (code === 'ArrowRight' || code === 'KeyD' || code === 'ArrowDown' || code === 'KeyS') game.tSel = (game.tSel + 1) % n;
+      if (code === 'ArrowLeft' || code === 'KeyA' || code === 'ArrowUp' || code === 'KeyW') game.tSel = (game.tSel + n - 1) % n;
+      if (game.tSel !== was) sfx.click();
+      if (go) { sfx.click(); TITLE_BTNS[game.tSel].act(); }
+    } else if (game.state === 'settings') {
+      const n = SETTINGS.length, was = game.oSel;
+      if (code === 'ArrowDown' || code === 'KeyS') game.oSel = (game.oSel + 1) % n;
+      if (code === 'ArrowUp' || code === 'KeyW') game.oSel = (game.oSel + n - 1) % n;
+      if (game.oSel !== was) sfx.click();
+      if (go || code === 'ArrowLeft' || code === 'ArrowRight' || code === 'KeyA' || code === 'KeyD') { sfx.click(); SETTINGS[game.oSel].act(); }
+      if (code === 'Escape') game.state = 'title';
+    } else if (game.state === 'knights') {
+      const rows = knightRows(), at = Math.max(0, rows.findIndex((r) => r.k.id === game.kId));
+      const was = game.kId;
+      if (code === 'ArrowDown' || code === 'KeyS') game.kId = rows[Math.min(rows.length - 1, at + 1)].k.id;
+      if (code === 'ArrowUp' || code === 'KeyW') game.kId = rows[Math.max(0, at - 1)].k.id;
+      if (code === 'ArrowRight' || code === 'KeyD') { game.kTab = (game.kTab + 1) % BOARDS.length; sfx.click(); }
+      if (code === 'ArrowLeft' || code === 'KeyA') { game.kTab = (game.kTab + BOARDS.length - 1) % BOARDS.length; sfx.click(); }
+      if (game.kId !== was) { game.kConfirm = null; game.kNote = ''; sfx.click(); }
+      if (go) { sfx.click(); useKnight(game.kId); game.state = 'mode'; }
+      if (code === 'KeyN') newKnight();
+      if (code === 'KeyE') renameKnight();
+      if (code === 'KeyX' || code === 'Delete' || code === 'Backspace') {
+        sfx.click();
+        if (game.kConfirm !== game.kId) { game.kConfirm = game.kId; game.kNote = ''; }
+        else { game.kConfirm = null; game.kNote = deleteKnight(game.kId) ? '' : 'you need at least one knight'; game.kId = knights.cur; }
+      }
+      if (code === 'Escape') { game.kConfirm = null; game.state = game.kBack; }
+    } else if (game.state === 'name') {
+      if (code === 'Enter') {
+        sfx.click();
+        const k = knights.list.find((q) => q.id === game.nameFor);
+        if (k) { k.name = cleanName(game.name, k.name); persistKnights(); }
+        else { addKnight(cleanName(game.name, `KNIGHT ${knights.next + 1}`)); game.kId = knights.cur; }
+        game.state = 'knights';
+      }
+      if (code === 'Escape') game.state = 'knights';
     } else if (game.state === 'admin') {
       const n = ADMIN_ITEMS.length, it = ADMIN_ITEMS[admin.sel];
       const was = admin.sel;
@@ -855,7 +1080,25 @@
       audioOn();
       const r = cv.getBoundingClientRect();
       const x = ((e.clientX - r.left) / r.width) * VW, y = ((e.clientY - r.top) / r.height) * VH;
-      if (game.state === 'title') onKey(y > VH - 40 && x > VW - 120 ? 'Backquote' : 'Enter');
+      if (game.state === 'knights') {
+        const tab = BOARDS.findIndex((_, i) => hitR(boardTab(i), x, y)), row = Math.floor((y - KROW.top) / KROW.h), rows = knightRows();
+        if (tab >= 0) { game.kTab = tab; sfx.click(); }
+        else if (hitR(KBTN.add, x, y)) onKey('KeyN');
+        else if (hitR(KBTN.ren, x, y)) onKey('KeyE');
+        else if (hitR(KBTN.del, x, y)) onKey('KeyX');
+        else if (x > KROW.x && x < VW - KROW.x && row >= 0 && row < rows.length) { game.kId = rows[row].k.id; onKey('Enter'); }
+        else if (y < 90) onKey('Escape');
+        return;
+      }
+      if (game.state === 'name') { askName(); return; }
+      if (game.state === 'mode' && hitR(KBTN.mode, x, y)) { onKey('KeyP'); return; }
+      if (game.state === 'title') {
+        const i = TITLE_BTNS.findIndex((_, j) => hitR(titleBtn(j), x, y));
+        if (i >= 0) { game.tSel = i; onKey('Enter'); } else if (y > VH - 44 && x > VW - 120) onKey('Backquote');
+      } else if (game.state === 'settings') {
+        const i = SETTINGS.findIndex((_, j) => hitR(settingsRow(j), x, y));
+        if (i >= 0) { game.oSel = i; onKey('Enter'); } else if (y < 90) onKey('Escape');
+      }
       else if (game.state === 'admin') {
         const i = Math.floor((y - ADMIN_ROW.top + ADMIN_ROW.h / 2) / ADMIN_ROW.h);
         if (i >= 0 && i < ADMIN_ITEMS.length) { if (admin.sel !== i) admin.confirmReset = false; admin.sel = i; onKey('Enter'); }
@@ -891,7 +1134,9 @@
   cv.width = LW; cv.height = LH;
   function resize() {
     const dpr = window.devicePixelRatio || 1;
-    const k = Math.max(1, Math.floor(Math.min((innerWidth * dpr) / LW, (innerHeight * dpr) / LH)));
+    // touch screens in landscape keep a gutter each side for the on-screen buttons
+    const gutter = !touchEl.hidden && innerWidth > innerHeight ? 2 * 180 : 0;
+    const k = Math.max(1, Math.floor(Math.min(((innerWidth - gutter) * dpr) / LW, (innerHeight * dpr) / LH)));
     cv.style.width = (LW * k) / dpr + 'px';
     cv.style.height = (LH * k) / dpr + 'px';
   }
@@ -1042,11 +1287,6 @@
     R(x + 2, y + 2, 2, 2, C.bg1); R(x + 8, y + 2, 2, 2, C.bg1); R(x + 4, y + 8, 2, 2, C.bg1); R(x + 6, y + 8, 2, 2, C.bg1);
   }
 
-  function roundRect(x, y, w, h, r) {
-    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
-  }
-
   function drawBg(n = 0) { ctx.drawImage(bgArt(n), 0, 0, VW, VH); }
 
   // wall lights and life behind the level; never anything that could pass for a hazard
@@ -1123,7 +1363,7 @@
       for (let k = 0; k * 12 < h - 8; k++) { R(x + w / 2 - 4, y + 6 + k * 12, 8, 6, '#0c080c'); R(x + w / 2 - 2, y + 6 + k * 12, 4, 6, b.link); R(x + w / 2 - 4, y + 8 + k * 12, 8, 2, b.link); }
     }
     ctx.globalAlpha = 1;
-    if (b.flash > 0) { ctx.globalAlpha = b.flash / 0.4; R(x, y, w, h, C.portal); ctx.globalAlpha = 1; }
+    if (b.flash > 0) { ctx.globalAlpha = (b.flash / 0.4) * (save.calm ? 0.3 : 1); R(x, y, w, h, C.portal); ctx.globalAlpha = 1; }
   }
 
   function drawLadder(l) {
@@ -1180,7 +1420,7 @@
       R(x, y, w, h, C.danger);
       if (vert) R(x + w / 2 - 1, y, PX, h, '#ffd6dd'); else R(x, y + h / 2 - 1, w, PX, '#ffd6dd');
     } else {
-      ctx.globalAlpha = l.warn ? (Math.sin(t * 60) > 0 ? 0.9 : 0.3) : 0.25;
+      ctx.globalAlpha = l.warn ? (save.calm ? 0.75 : Math.sin(t * 60) > 0 ? 0.9 : 0.3) : 0.25;
       if (vert) for (let j = 0; j < h; j += 6) R(x + w / 2 - 1, y + j, PX, PX, C.danger);
       else for (let j = 0; j < w; j += 6) R(x + j, y + h / 2 - 1, PX, PX, C.danger);
       ctx.globalAlpha = 1;
@@ -1276,7 +1516,7 @@
   function drawLevel(L) {
     const t = L.t, n = areaOf(L.idx);
     ctx.save();
-    if (L.shakeT > 0) ctx.translate(sn((Math.random() - 0.5) * L.shakeMag * TILE), sn((Math.random() - 0.5) * L.shakeMag * TILE));
+    if (L.shakeT > 0 && !save.calm) ctx.translate(sn((Math.random() - 0.5) * L.shakeMag * TILE), sn((Math.random() - 0.5) * L.shakeMag * TILE));
     if (L.view.mirror) { ctx.translate(VW, 0); ctx.scale(-1, 1); }
     if (L.view.flip) { ctx.translate(0, VH); ctx.scale(1, -1); }
     drawBg(n);
@@ -1301,13 +1541,18 @@
       R(p.x * TILE, p.y * TILE, Math.max(PX, p.size * TILE), Math.max(PX, p.size * TILE), p.color);
     }
     ctx.globalAlpha = 1;
-    if (L.dark) {
-      const p = L.cur, cx = sn((p.x + p.w / 2) * TILE), cy = sn((p.y + p.h / 2) * TILE), rpx = Math.round((L.dark * TILE) / PX), art = darkArt(rpx);
+    // reduce flashing: the lights-out flicker becomes a half-dim reveal instead of black/bright/black
+    if (L.dark) { L.lastDark = L.dark; L.lastDarkT = L.t; }
+    const darkR = L.dark || (save.calm && L.lastDark && L.t - L.lastDarkT < 0.4 ? L.lastDark : 0);
+    if (darkR) {
+      if (!L.dark) ctx.globalAlpha = 0.55;
+      const p = L.cur, cx = sn((p.x + p.w / 2) * TILE), cy = sn((p.y + p.h / 2) * TILE), rpx = Math.round((darkR * TILE) / PX), art = darkArt(rpx);
       const x0 = cx - art.width, y0 = cy - art.height, x1 = x0 + art.width * PX, y1 = y0 + art.height * PX;
       ctx.drawImage(art, x0, y0, art.width * PX, art.height * PX);
       ctx.fillStyle = '#05050e';
       ctx.fillRect(-VW, -VH, VW * 3, y0 + VH); ctx.fillRect(-VW, y1, VW * 3, VH * 2);
       ctx.fillRect(-VW, y0, x0 + VW, y1 - y0); ctx.fillRect(x1, y0, VW * 2, y1 - y0);
+      ctx.globalAlpha = 1;
     }
     for (const b of L.bubbles) drawBubble(b, L);
     ctx.restore();
@@ -1348,7 +1593,7 @@
       ctx.globalAlpha = a; text(m.text, VW / 2, barH + 60, 26, C.danger, 'center', null, '#0a080c'); ctx.globalAlpha = 1;
     }
     ctx.fillStyle = 'rgba(10,8,12,0.8)'; ctx.fillRect(0, VH - 28, VW, 28);
-    const hint = padCount ? 'stick move · A jump · Y restart · start levels' : `${two ? 'P1 A D W · P2 ← → ↑' : '← → move · space jump'} · R restart · esc levels · M mute`;
+    const hint = padCount ? 'stick move · A jump · Y restart · start levels' : !touchEl.hidden && !two ? '◀ ▶ move · ▲ jump · R restart · ESC levels' : `${two ? 'P1 A D W · P2 ← → ↑' : '← → move · space jump'} · R restart · esc levels · M mute`;
     text(hint, VW / 2, VH - 14, 12, 'rgba(232,220,192,0.7)');
     const tags = [admin.unlock && 'N skip', admin.god && 'GOD', admin.speed !== 1 && `${admin.speed}x`].filter(Boolean);
     if (tags.length) text(`ADMIN: ${tags.join(' · ')}`, VW - 10, barH + 16, 12, C.danger, 'right');
@@ -1361,7 +1606,7 @@
     if (!CUT) return then();
     const m = MODE[game.mode];
     let s;
-    try { s = CUT.make(id, { players: m.players, chained: !!m.chained, skins: SKINS, areas: AREAS, deaths: save.deaths, sfx }); }
+    try { s = CUT.make(id, { players: m.players, chained: !!m.chained, skins: SKINS, areas: AREAS, deaths: save.deaths, sfx, calm: save.calm }); }
     catch (e) { console.error(e); return then(); }
     game.cut = { s, t: 0, then }; game.state = 'cutscene'; game.clearInput(); particles = []; fxs = [];
   }
@@ -1377,7 +1622,7 @@
       ctx.globalAlpha = Math.min(1, (t - a) / 0.3, (b - t) / 0.3); text(str, VW / 2, VH - 28, 16, C.text); ctx.globalAlpha = 1;
     },
     label(str, k) { ctx.globalAlpha = clamp(k * 1.6, 0, 1); text(str, VW / 2, 84, 54, C.portal, 'center', null, '#2a0a0a'); ctx.globalAlpha = 1; },
-    shout(str) { text(str, VW / 2 + sn((Math.random() - 0.5) * 8), VH / 2 - 60, 80, C.danger, 'center', null, '#000'); },
+    shout(str) { text(str, VW / 2 + (save.calm ? 0 : sn((Math.random() - 0.5) * 8)), VH / 2 - 60, 80, C.danger, 'center', null, '#000'); },
     fadeOut(t, a, b) { if (t > a) { ctx.fillStyle = `rgba(0,0,0,${clamp((t - a) / (b - a), 0, 1)})`; ctx.fillRect(0, 0, VW, VH); } },
     card(t, title, sub, color) {
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VW, VH);
@@ -1424,22 +1669,169 @@
   function drawTitleText(t) {
     text('MASTER BAITER', VW / 2, 62, 80, C.player, 'center', null, '#1a0408');
     text('a platformer that does not like you', VW / 2, 112, 18, C.text, 'center', null, '#0a080c');
-    const blink = Math.sin(t * 4) > -0.3;
-    if (blink) text('press SPACE / tap to play', VW / 2, VH * 0.74, 22, C.portal, 'center', null, '#0a080c');
-    text(`deaths so far: ${save.deaths}`, VW / 2, VH * 0.82, 16, C.danger, 'center', null, '#0a080c');
-    text(save.muted ? 'sound off (M)' : 'sound on (M)', VW / 2, VH - 20, 12, C.dim, 'center', null, '#0a080c');
+    TITLE_BTNS.forEach((b, i) => {
+      const r = titleBtn(i), on = i === game.tSel;
+      panel(r.x, r.y, r.w, r.h, on);
+      text(b.label, r.x + r.w / 2, r.y + r.h / 2, 16, on ? C.portal : C.text);
+    });
+    const leaving = t - game.exitT < 3;   // browsers only let a page close tabs it opened itself
+    text(leaving ? 'the castle will not let you leave. close the tab.' : `${knightName()} · deaths so far: ${save.deaths}`, VW / 2, 458, 16, C.danger, 'center', null, '#0a080c');
     text('` admin', VW - 14, VH - 20, 12, C.dim, 'right', null, '#0a080c');
   }
 
-  function drawAdmin() {
-    drawBg();
-    text('ADMIN PANEL', VW / 2, 90, 48, C.danger);
-    text('this session only · not saved', VW / 2, 132, 14, C.dim, 'center', 'normal');
+  // ---- menu pieces: a stone panel with a bevel and rivets, gold-framed when selected
+  function panel(x, y, w, h, on, dim) {
+    x = sn(x); y = sn(y); w = sn(w); h = sn(h);
+    const face = dim ? '#18141c' : '#2a2430', lite = dim ? '#241f2a' : '#4a4352';
+    R(x, y, w, h, '#0c080c');
+    R(x + PX, y + PX, w - 2 * PX, h - 2 * PX, face);
+    R(x + PX, y + PX, w - 2 * PX, PX, lite); R(x + PX, y + PX, PX, h - 2 * PX, lite);
+    R(x + PX, y + h - 2 * PX, w - 2 * PX, PX, '#110d14'); R(x + w - 2 * PX, y + PX, PX, h - 2 * PX, '#110d14');
+    if (on) { R(x - PX, y - PX, w + 2 * PX, 2 * PX, C.portal); R(x - PX, y + h - PX, w + 2 * PX, 2 * PX, C.portal); R(x - PX, y, 2 * PX, h, C.portal); R(x + w - PX, y, 2 * PX, h, C.portal); }
+    for (const [rx, ry] of [[x + 3 * PX, y + 3 * PX], [x + w - 4 * PX, y + 3 * PX], [x + 3 * PX, y + h - 4 * PX], [x + w - 4 * PX, y + h - 4 * PX]]) R(rx, ry, PX, PX, on ? '#ffe27a' : '#6b6b78');
+  }
+  // the dungeon wall, dimmed, with a torch either side
+  function menuBg(t, n = 0) {
+    drawBg(n);
+    ctx.fillStyle = 'rgba(5,4,8,0.45)'; ctx.fillRect(0, 0, VW, VH);
+    drawFx('torch', t, 1.3 * TILE, 8 * TILE); drawFx('torch', t + 0.7, VW - 1.3 * TILE, 8 * TILE);
+  }
+  function padlock(cx, cy, col) {
+    R(cx - 6, cy - 10, 12, 2, col); R(cx - 6, cy - 10, 2, 8, col); R(cx + 4, cy - 10, 2, 8, col);
+    R(cx - 10, cy - 2, 20, 14, col); R(cx - 2, cy + 2, 4, 6, '#0c080c');
+  }
+
+  function drawAdmin(t) {
+    menuBg(t || 0);
+    text('ADMIN PANEL', VW / 2, 90, 48, C.danger, 'center', null, '#1a0408');
+    text('this session only · not saved', VW / 2, 132, 14, C.dim);
+    panel(VW / 2 - 330, ADMIN_ROW.top - 34, 660, ADMIN_ITEMS.length * ADMIN_ROW.h + 22);
     ADMIN_ITEMS.forEach((it, i) => {
       const on = i === admin.sel;
-      text(on ? `> ${it.label()} <` : it.label(), VW / 2, ADMIN_ROW.top + i * ADMIN_ROW.h, 20, on ? C.portal : C.text, 'center', on ? undefined : 'normal');
+      text(on ? `> ${it.label()} <` : it.label(), VW / 2, ADMIN_ROW.top + i * ADMIN_ROW.h, 20, on ? C.portal : C.text);
     });
-    text('↑/↓ choose · ←/→ or ENTER change · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', 'normal');
+    text('↑/↓ choose · ←/→ or ENTER change · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', null, '#0a080c');
+  }
+
+  // ---- title buttons and the settings screen
+  const TITLE_BTNS = [
+    { label: 'PLAY', act() { game.state = 'mode'; } },
+    { label: 'SETTINGS', act() { game.oSel = 0; game.state = 'settings'; } },
+    { label: 'LEADERBOARD', act() { openKnights(); } },
+    { label: 'EXIT', act() { try { window.close(); } catch (e) { /* ignore */ } game.exitT = game.time; } },
+  ];
+  const titleBtn = (i) => ({ x: VW / 2 - 2 * 222 + i * 222 + 6, y: 384, w: 210, h: 46 });
+  const SETTINGS = [
+    { label: () => `SOUND: ${save.muted ? 'OFF' : 'ON'}`, key: 'M', act() { save.muted = !save.muted; persist(); } },
+    { label: () => `FLASHING: ${save.calm ? 'REDUCED' : 'ON'}`, key: 'F', act() { save.calm = !save.calm; persist(); } },
+    { label: () => 'BACK', key: 'ESC', act() { game.state = 'title'; } },
+  ];
+  const settingsRow = (i) => ({ x: VW / 2 - 200, y: 180 + i * 70, w: 400, h: 52 });
+  function drawSettings(t) {
+    menuBg(t);
+    text('SETTINGS', VW / 2, 80, 48, C.portal, 'center', null, '#2a0a0a');
+    text(`saved for ${knightName()}`, VW / 2, 122, 14, C.dim);
+    SETTINGS.forEach((it, i) => {
+      const r = settingsRow(i), on = i === game.oSel;
+      panel(r.x, r.y, r.w, r.h, on);
+      text(it.label(), r.x + 24, r.y + r.h / 2, 16, on ? C.portal : C.text, 'left');
+      text(it.key, r.x + r.w - 24, r.y + r.h / 2, 16, C.dim, 'right');
+    });
+    text(padCount ? '↑/↓ choose · A change · B back' : '↑/↓ choose · ENTER change · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', null, '#0a080c');
+  }
+
+  // ---- knights: local profiles, each with its own save, ranked on a leaderboard
+  const BOARDS = [
+    { id: 'single', label: 'SINGLE' }, { id: 'multi', label: 'MULTI' }, { id: 'special', label: 'SPECIAL' },
+    { id: 'shame', label: 'SHAME' },
+  ];
+  const NAME_MAX = 12;
+  const KROW = { x: 150, top: 186, h: 30 };
+  const KBTN = { add: { x: 130, y: 446, w: 260, h: 38 }, ren: { x: 410, y: 446, w: 200, h: 38 }, del: { x: 630, y: 446, w: 200, h: 38 }, mode: { x: VW - 250, y: 12, w: 236, h: 36 } };
+  const hitR = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+  const boardTab = (i) => ({ x: VW / 2 - 2 * 164 + i * 164 + 4, y: 128, w: 156, h: 36 });
+  const cleanName = (s, fallback) => s.toUpperCase().replace(/[^A-Z0-9 ._'-]/g, '').trim().slice(0, NAME_MAX) || fallback;
+  // each knight with its save; sorted for the current board (furthest first, fewer deaths breaks ties; shame: most deaths)
+  function knightRows() {
+    const b = BOARDS[game.kTab].id;
+    const rows = knights.list.map((k) => ({ k, s: k.id === knights.cur ? save : loadSave(k.id) }));
+    if (b === 'shame') return rows.sort((p, q) => q.s.deaths - p.s.deaths);
+    return rows.sort((p, q) => (q.s.best[b] || 1) - (p.s.best[b] || 1) || p.s.deaths - q.s.deaths);
+  }
+  function nemesis(s) {
+    let top = null;
+    for (const k in s.causes) if (KILLER[k] && (!top || s.causes[k] > s.causes[top])) top = k;
+    return top ? KILLER[top] : '-';
+  }
+  function openKnights() {
+    game.kBack = game.state; game.kId = knights.cur; game.kConfirm = null; game.kNote = '';
+    game.kTab = Math.max(0, BOARDS.findIndex((b) => b.id === game.mode));
+    game.state = 'knights';
+  }
+  function newKnight() {
+    sfx.click();
+    if (knights.list.length >= MAX_KNIGHTS) { game.kNote = `the roster is full (${MAX_KNIGHTS}). delete one first.`; return; }
+    game.nameFor = null; game.name = `KNIGHT ${knights.next + 1}`; game.nameFresh = true; game.state = 'name';
+    if (!touchEl.hidden && !padCount) askName();   // no keyboard on a phone: use the system text box
+  }
+  // edit the selected knight's name in place (the cursor starts at the end, so backspace trims it)
+  function renameKnight() {
+    sfx.click(); game.kConfirm = null; game.kNote = '';
+    game.nameFor = game.kId; game.name = knights.list.find((k) => k.id === game.kId).name; game.nameFresh = false; game.state = 'name';
+    if (!touchEl.hidden && !padCount) askName();
+  }
+  function askName() {
+    const n = window.prompt(game.nameFor != null ? 'Rename your knight' : 'Name your knight', game.name);
+    if (n === null) { game.state = 'knights'; return; }
+    game.name = n; onKey('Enter');
+  }
+
+  function drawKnights(t) {
+    menuBg(t);
+    text('KNIGHTS', VW / 2, 64, 48, C.portal, 'center', null, '#2a0a0a');
+    text(BOARDS[game.kTab].id === 'shame' ? 'most deaths · and the trap that got them most' : 'furthest level reached · deaths break ties', VW / 2, 104, 14, C.dim);
+    BOARDS.forEach((b, i) => {
+      const r = boardTab(i), on = i === game.kTab;
+      panel(r.x, r.y, r.w, r.h, on, !on);
+      text(b.label, r.x + r.w / 2, r.y + r.h / 2, 16, on ? C.portal : C.dim);
+    });
+    const board = BOARDS[game.kTab].id, rows = knightRows();
+    panel(KROW.x - 10, KROW.top - 10, VW - 2 * KROW.x + 20, MAX_KNIGHTS * KROW.h + 20);
+    rows.forEach((row, i) => {
+      const y = KROW.top + i * KROW.h + KROW.h / 2, sel = row.k.id === game.kId, cur = row.k.id === knights.cur;
+      if (sel) R(KROW.x, y - KROW.h / 2 + 2, VW - 2 * KROW.x, KROW.h - 4, 'rgba(255,174,53,0.16)');
+      const col = sel ? C.portal : C.text;
+      text(`${i + 1}.`, KROW.x + 34, y, 16, C.dim, 'right');
+      text(row.k.name + (cur ? '  (you)' : ''), KROW.x + 50, y, 16, col, 'left');
+      if (board === 'shame') {
+        skullIcon(500, y - 5, C.danger);
+        text(String(row.s.deaths), 520, y, 16, C.danger, 'left');
+        text(nemesis(row.s), VW - KROW.x - 12, y, 16, C.dim, 'right');
+      } else {
+        const n = course(board).length, best = Math.min(row.s.best[board] || 1, n + 1);
+        text(best > n ? 'CLEARED' : `level ${best} / ${n}`, 500, y, 16, best > n ? C.flag : col, 'left');
+        skullIcon(VW - KROW.x - 96, y - 5, C.dim);
+        text(String(row.s.deaths), VW - KROW.x - 12, y, 16, C.dim, 'right');
+      }
+    });
+    const full = knights.list.length >= MAX_KNIGHTS, delOn = game.kConfirm === game.kId;
+    panel(KBTN.add.x, KBTN.add.y, KBTN.add.w, KBTN.add.h, false, full);
+    text('+ NEW KNIGHT (N)', KBTN.add.x + KBTN.add.w / 2, KBTN.add.y + KBTN.add.h / 2, 16, full ? C.dim : C.text);
+    panel(KBTN.ren.x, KBTN.ren.y, KBTN.ren.w, KBTN.ren.h);
+    text('RENAME (E)', KBTN.ren.x + KBTN.ren.w / 2, KBTN.ren.y + KBTN.ren.h / 2, 16, C.text);
+    panel(KBTN.del.x, KBTN.del.y, KBTN.del.w, KBTN.del.h, delOn, knights.list.length < 2);
+    text(delOn ? 'SURE? (X)' : 'DELETE (X)', KBTN.del.x + KBTN.del.w / 2, KBTN.del.y + KBTN.del.h / 2, 16, delOn ? C.danger : C.text);
+    if (game.kNote) text(game.kNote, VW / 2, 500, 14, C.danger);
+    text(padCount ? '←/→ board · ↑/↓ knight · A play as · Y rename · B back' : '←/→ board · ↑/↓ knight · ENTER play as · ESC back', VW / 2, VH - 16, 12, C.dim, 'center', null, '#0a080c');
+  }
+
+  function drawName(t) {
+    menuBg(t);
+    text(game.nameFor != null ? 'RENAME KNIGHT' : 'NAME YOUR KNIGHT', VW / 2, 150, 36, C.portal, 'center', null, '#2a0a0a');
+    panel(VW / 2 - 220, 220, 440, 80, true);
+    const cursor = !game.nameFresh && Math.sin(t * 6) > 0 ? '_' : ' ';
+    text(game.name + cursor, VW / 2, 260, 32, game.nameFresh ? C.dim : C.text);
+    text(padCount ? 'A ok · B cancel' : 'type a name · ENTER ok · ESC cancel', VW / 2, 350, 16, C.dim);
   }
 
   const SEL = { cols: 5, w: 120, h: 86, gapX: 24, gapY: 14, viewTop: 116, viewBottom: 404 };
@@ -1487,9 +1879,9 @@
     if (instantly) game.scrollY = game.targetScrollY;
   }
   function drawSelect(t) {
-    drawBg();
-    text('PICK YOUR POISON', VW / 2, 45, 36, C.player);
-    text(`${MODE[game.mode].name} · ESC back · ↑/↓/Wheel to scroll`, VW / 2, 82, 13, C.dim, 'center', 'normal');
+    menuBg(t, areaOf(game.sel));
+    text('PICK YOUR POISON', VW / 2, 45, 36, C.player, 'center', null, '#1a0408');
+    text(`${MODE[game.mode].name} · ESC back · ↑/↓/Wheel to scroll`, VW / 2, 82, 13, C.dim, 'center', null, '#0a080c');
 
     // Smooth scroll interpolation
     game.scrollY = approach(game.scrollY, game.targetScrollY, 20);
@@ -1504,13 +1896,13 @@
       const r = selectRect(i, game.scrollY);
       if (r.y + r.h < SEL.viewTop - 5 || r.y > SEL.viewBottom + 5) continue;
       const open = i < game.unlocked(), on = i === game.sel;
-      ctx.fillStyle = on ? 'rgba(255,79,139,0.25)' : 'rgba(232,230,240,0.06)';
-      roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
-      ctx.strokeStyle = on ? C.player : open ? C.blockEdge : 'rgba(232,230,240,0.15)'; ctx.lineWidth = on ? 3 : 1.5; ctx.stroke();
-      text(open ? String(i + 1) : '?', r.x + r.w / 2, r.y + 32, 30, open ? C.text : C.dim);
-      const d = save.levelDeaths[dkey(game.mode, i)] || 0;
-      if (open) { const w = text(String(d), r.x + r.w / 2 + 10, r.y + 65, 13, C.danger); skullIcon(r.x + r.w / 2 + 10 - w / 2 - 20, r.y + 55, C.danger); }
-      else text('locked', r.x + r.w / 2, r.y + 65, 13, C.dim);
+      panel(r.x, r.y, r.w, r.h, on, !open);
+      R(r.x + 4 * PX, r.y + 4 * PX, r.w - 8 * PX, PX, open ? AREAS[areaOf(i)].title : '#2a2430');   // which area it's in
+      if (open) {
+        text(String(i + 1), r.x + r.w / 2, r.y + 34, 30, on ? C.portal : C.text);
+        const d = save.levelDeaths[dkey(game.mode, i)] || 0;
+        const w = text(String(d), r.x + r.w / 2 + 10, r.y + 66, 13, C.danger); skullIcon(r.x + r.w / 2 + 10 - w / 2 - 20, r.y + 56, C.danger);
+      } else padlock(r.x + r.w / 2, r.y + r.h / 2, '#4a4352');
     }
     ctx.restore();
 
@@ -1520,22 +1912,21 @@
       const barTrackX = VW - 30;
       const barTrackY = SEL.viewTop;
       const barTrackH = SEL.viewBottom - SEL.viewTop;
-      ctx.fillStyle = 'rgba(255,255,255,0.06)';
-      roundRect(barTrackX, barTrackY, 5, barTrackH, 2.5);
-      ctx.fill();
+      R(barTrackX, barTrackY, 6, barTrackH, '#16121c');
 
       const totalH = (SEL.viewBottom - SEL.viewTop) + maxScroll;
       const viewRatio = (SEL.viewBottom - SEL.viewTop) / totalH;
       const thumbH = Math.max(32, barTrackH * viewRatio);
       const thumbY = barTrackY + (game.scrollY / maxScroll) * (barTrackH - thumbH);
-      ctx.fillStyle = C.portal;
-      roundRect(barTrackX, thumbY, 5, thumbH, 2.5);
-      ctx.fill();
+      R(barTrackX, thumbY, 6, thumbH, C.portal);
     }
 
     // Selected level description footer
     const s = course(game.mode)[game.sel];
-    if (s) text(s.name, VW / 2, VH - 50, 22, C.portal);
+    if (s) {
+      text(s.name, VW / 2, VH - 64, 22, C.portal, 'center', null, '#0a080c');
+      text(AREAS[areaOf(game.sel)].name, VW / 2, VH - 28, 13, AREAS[areaOf(game.sel)].text, 'center', null, '#0a080c');
+    }
   }
 
   const MCARD = { w: 300, h: 260, gap: 10, top: 140 };
@@ -1548,14 +1939,14 @@
     return -1;
   }
   function drawMode(t) {
-    drawBg();
-    text('CHOOSE YOUR SUFFERING', VW / 2, 80, 36, C.player);
+    menuBg(t);
+    text('CHOOSE YOUR SUFFERING', VW / 2, 80, 36, C.player, 'center', null, '#1a0408');
+    panel(KBTN.mode.x, KBTN.mode.y, KBTN.mode.w, KBTN.mode.h);
+    text(`${knightName()} · ${padCount ? 'BACK' : 'P'}`, KBTN.mode.x + KBTN.mode.w / 2, KBTN.mode.y + KBTN.mode.h / 2, 16, C.portal);
     const fakeL = { g: 1, invert: false };
     MODES.forEach((m, i) => {
       const r = modeRect(i), on = i === game.modeSel, cx = r.x + r.w / 2;
-      ctx.fillStyle = on ? 'rgba(255,79,139,0.22)' : 'rgba(232,230,240,0.06)';
-      roundRect(r.x, r.y, r.w, r.h, 14); ctx.fill();
-      ctx.strokeStyle = on ? C.player : C.blockEdge; ctx.lineWidth = on ? 3 : 1.5; ctx.stroke();
+      panel(r.x, r.y, r.w, r.h, on);
       // little preview
       const bob = (k) => Math.abs(Math.sin(t * 3 + k)) * 0.5;
       ctx.save(); ctx.translate(cx, r.y + 105); ctx.scale(1.6, 1.6); ctx.translate(-cx, -(r.y + 105));
@@ -1579,26 +1970,30 @@
         }
         ctx.globalAlpha = 1;
       }
-      text(m.name, cx, r.y + 175, 22, on ? C.text : C.blockEdge);
-      text(m.sub, cx, r.y + 205, 14, C.dim, 'center', 'normal');
+      text(m.name, cx, r.y + 175, 22, on ? C.portal : C.text);
+      text(m.sub, cx, r.y + 205, 14, C.dim);
       const lvl = Math.min(save.progress[m.id] || 1, course(m.id).length);
       text(`level ${lvl} / ${course(m.id).length}`, cx, r.y + 235, 13, C.danger, 'center', 'normal');
     });
     const m = MODES[game.modeSel];
-    text(padCount ? `Controller${padCount > 1 ? `s (${padCount})` : ''} connected · Stick/D-pad move · A jump` : m.hint, VW / 2, MCARD.top + MCARD.h + 45, 15, C.portal, 'center', 'normal');
+    text(padCount ? `Controller${padCount > 1 ? `s (${padCount})` : ''} connected · Stick/D-pad move · A jump` : m.hint, VW / 2, MCARD.top + MCARD.h + 45, 15, C.portal, 'center', null, '#0a080c');
     if (m.players > 1 && matchMedia('(pointer: coarse)').matches && padCount < 2) text('2-player modes need a keyboard or 2 controllers', VW / 2, MCARD.top + MCARD.h + 72, 13, C.danger, 'center', 'normal');
-    text(padCount ? '←/→ choose · A play · Y pick level · B back' : '←/→ choose · ENTER play · L pick level · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', 'normal');
+    text(padCount ? '←/→ choose · A play · Y pick level · B back' : '←/→ choose · ENTER play · L pick level · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', null, '#0a080c');
   }
 
+  // the bottom of the castle: braziers, a stone tablet with your record
   function drawEnd(t) {
-    drawBg();
-    text('YOU WIN.', VW / 2, 170, 80, C.portal);
+    drawBg(3);
+    ctx.fillStyle = 'rgba(5,4,8,0.35)'; ctx.fillRect(0, 0, VW, VH);
+    drawFx('brazier', t, 2.4 * TILE, VH - 6); drawFx('brazier', t + 1.3, VW - 2.4 * TILE, VH - 6);
+    panel(VW / 2 - 290, 110, 580, 290, true);
+    text('YOU WIN.', VW / 2, 170, 80, C.portal, 'center', null, '#2a0a0a');
     const endSub = { single: 'for real this time.', multi: 'together. somehow.', special: 'and you are STILL chained together.' };
-    text(endSub[game.mode], VW / 2, 230, 18, C.text, 'center', 'normal');
-    text(`total deaths: ${save.deaths}`, VW / 2, 300, 30, C.danger);
+    text(endSub[game.mode], VW / 2, 230, 18, C.text);
+    text(`total deaths: ${save.deaths}`, VW / 2, 290, 30, C.danger);
     const rank = save.deaths < 25 ? 'suspiciously good' : save.deaths < 60 ? 'respectable suffering' : save.deaths < 120 ? 'certified rager' : 'controller is in the wall';
-    text(`rank: ${rank}`, VW / 2, 345, 18, C.text, 'center', 'normal');
-    if (Math.sin(t * 4) > -0.3) text('press SPACE', VW / 2, 430, 20, C.player);
+    text(`rank: ${rank}`, VW / 2, 345, 18, C.text);
+    if (Math.sin(t * 4) > -0.3) text('press SPACE', VW / 2, 450, 20, C.player, 'center', null, '#0a080c');
   }
 
   // ---------------------------------------------------------------- main loop
@@ -1615,12 +2010,16 @@
     updateFx(dt);
     if (game.message) { game.message.t += dt; if (game.message.t > 1.6) game.message = null; }
     if (game.state === 'cutscene' && game.cut) { game.cut.t += dt; if (game.cut.t >= game.cut.s.dur) endCut(); }
+    music.want(game.state === 'play' ? 'area' + areaOf(game.idx) : game.state === 'cutscene' && game.cut ? ({ intro: 'title', ending: 'ending' }[game.cut.s.id] || 'area' + game.cut.s.id.slice(4)) : game.state === 'end' ? 'win' : 'title');
 
     baseTransform();
     if (game.state === 'title') drawTitle(game.time);
     else if (game.state === 'mode') drawMode(game.time);
     else if (game.state === 'select') drawSelect(game.time);
-    else if (game.state === 'admin') drawAdmin();
+    else if (game.state === 'admin') drawAdmin(game.time);
+    else if (game.state === 'knights') drawKnights(game.time);
+    else if (game.state === 'settings') drawSettings(game.time);
+    else if (game.state === 'name') drawName(game.time);
     else if (game.state === 'play') drawLevel(game.level);
     else if (game.state === 'cutscene') drawCut(game.cut);
     else drawEnd(game.time);
@@ -1630,7 +2029,7 @@
 
   // deterministic hooks for automated tests (no effect on normal play)
   window.__ragebait = {
-    game, save, playCut, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed, pollPads,
+    game, save, knights, key: onKey, useKnight, addKnight, deleteKnight, playCut, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed, pollPads,
     load(i, mode = 'single') { game.setMode(mode); game.start(i); },
     step(n = 1) { for (let i = 0; i < n; i++) game.level.step(STEP); },
     STEP,

@@ -1624,6 +1624,50 @@ const run = ([onlyCourse, onlyLevel]) => {
     } catch (e) { bad.push(`gamepad: threw ${e.message}`); }
     if (origNav) Object.defineProperty(window, 'navigator', origNav);
   }
+  // ---- knights (profiles) keep separate saves; death messages name the right trap
+  if (!onlyCourse && !onlyLevel) {
+    try {
+      const k = R.knights, home = k.cur, n0 = k.list.length, d0 = R.save.deaths;
+      R.addKnight('TEST');
+      const id = k.cur;
+      chk('knights', id !== home && R.save.deaths === 0 && k.list.length === n0 + 1, 'new knight did not start fresh');
+      R.load(0, 'single'); R.game.level.kill(); R.load(0, 'single');
+      chk('knights', R.save.deaths === 1, 'death not counted on the new knight');
+      R.useKnight(home);
+      chk('knights', R.save.deaths === d0 && k.cur === home, 'switching back lost the old save');
+      chk('knights', R.deleteKnight(id) && k.list.length === n0 && !localStorage.getItem('ragebait.save.v1:' + id), 'delete left the knight behind');
+      // rename: keyboard types on the name screen, touch goes through prompt(); both must end the same
+      const oldName = k.list.find((q) => q.id === home).name, oldPrompt = window.prompt;
+      window.prompt = () => 'sir test!';
+      R.game.state = 'knights'; R.game.kId = home; R.key('KeyE');
+      if (R.game.state === 'name') { R.game.name = 'sir test!'; R.key('Enter'); }
+      window.prompt = oldPrompt;
+      chk('knights', k.list.find((q) => q.id === home).name === 'SIR TEST' && k.cur === home && R.game.state === 'knights', 'rename failed');
+      k.list.find((q) => q.id === home).name = oldName;
+      // title buttons: PLAY / SETTINGS / LEADERBOARD / EXIT
+      const G = R.game, calm0 = R.save.calm;
+      G.state = 'title'; G.tSel = 0; R.key('Enter');
+      chk('title', G.state === 'mode', 'PLAY did not open the mode screen');
+      G.state = 'title'; R.key('ArrowRight'); R.key('Enter');
+      chk('title', G.state === 'settings', 'SETTINGS did not open');
+      R.key('ArrowDown'); R.key('Enter');
+      chk('title', R.save.calm === !calm0, 'flashing toggle failed');
+      R.key('Enter'); R.key('Escape');
+      chk('title', R.save.calm === calm0 && G.state === 'title', 'settings back failed');
+      R.key('ArrowRight'); R.key('Enter');
+      chk('title', G.state === 'knights' && G.kBack === 'title', 'LEADERBOARD did not open');
+      R.key('Escape'); R.key('ArrowRight'); R.key('Enter');
+      chk('title', G.state === 'title' && G.exitT === G.time, 'EXIT did not respond');
+      G.exitT = -9;
+      R.load(32, 'single'); let L = R.game.level;   // Lv 33: fake floors over spikes
+      const fb = L.blocks.find((b) => !b.solid && !b.hidden && !b.ghost), p = L.players[0];
+      p.x = fb.x + fb.w / 2 - 0.4; p.y = fb.y - p.h - 0.3; p.vx = p.vy = 0;
+      for (let f = 0; f < 600 && !L.over; f++) L.step(R.STEP);
+      chk('knights', L.kind === 'fakeFloor', `fake floor death read as ${L.kind}`);
+      R.load(0, 'single'); L = R.game.level; L.kill();
+      chk('knights', L.kind === 'restart' && /R|self|over/.test(R.game.message.text), 'restart message wrong');
+    } catch (e) { bad.push(`knights: threw ${e.message}`); }
+  }
   const s0 = JSON.parse(snap); R.save.deaths = s0[0]; R.save.levelDeaths = s0[1]; R.save.shame = s0[2];   // kill() above counted deaths
   out.push(bad.length ? bad.map((b) => `[edge] ${b}`).join('\n') : `[edge] ${n} levels load, spawn safe, idle, restart, fake doors: won`);
   return out;

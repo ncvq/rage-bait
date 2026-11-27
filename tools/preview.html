@@ -1,0 +1,74 @@
+<!doctype html>
+<!-- Dev harness: the game, jumped straight to a screen, level or cutscene moment via the query string.
+     Keep the <body> in sync with index.html. Screenshot it with tools/shot.sh.
+       ?state=title|mode|select|admin|end   a menu screen   (&t=SECONDS sets the menu clock)
+       ?level=N[&mode=multi|special][&run=STEPS][&die=1]   a level; run holds right for STEPS ticks (120/s)
+       ?cut=intro|area1|area2|area3|ending&t=SECONDS[&mode=...]   a cutscene frame
+       ?win=N[&mode=...]   finish level N and log where the game goes next (console: FLOW ...)
+       ?state=knights&knights=1[&tab=0-3]   the leaderboard with demo knights (in memory only)
+       &touch=1   show the touch buttons     &calm=1   reduce flashing on -->
+<html lang="en">
+<head>
+  <base href="../">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Master Baiter preview</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" aria-label="Master Baiter game"></canvas>
+  </div>
+  <div id="touch" hidden>
+    <div class="pad-left">
+      <button data-key="left" aria-label="Move left">&#9664;</button>
+      <button data-key="right" aria-label="Move right">&#9654;</button>
+    </div>
+    <div class="pad-right">
+      <button data-key="menu" class="small" aria-label="Level select">ESC</button>
+      <button data-key="restart" class="small" aria-label="Restart">R</button>
+      <button data-key="jump" aria-label="Jump">&#9650;</button>
+    </div>
+  </div>
+  <script>
+  // &knights=1: demo knights for the leaderboard, in an in-memory store so real saves are never touched
+  if (/[?&]knights=1/.test(location.search)) {
+    const m = {}, put = (k, v) => { m[k] = JSON.stringify(v); };
+    put('ragebait.knights.v1', { cur: 0, next: 5, list: [{ id: 0, name: 'KNIGHT' }, { id: 1, name: 'SIR DIES-A-LOT' }, { id: 2, name: 'LANCE' }, { id: 3, name: 'GWEN' }, { id: 4, name: 'BOB' }] });
+    put('ragebait.save.v1', { deaths: 57, progress: { single: 12 }, causes: { popped: 20, fell: 9 } });
+    put('ragebait.save.v1:1', { deaths: 412, progress: { single: 9, multi: 4 }, causes: { laser: 88, sawMoving: 30 } });
+    put('ragebait.save.v1:2', { deaths: 140, progress: { single: 40 }, best: { single: 41, multi: 22, special: 3 }, causes: { fakeFloor: 51 } });
+    put('ragebait.save.v1:3', { deaths: 33, progress: { single: 25, special: 18 }, causes: { crusher: 12 } });
+    put('ragebait.save.v1:4', { deaths: 2, causes: { mimic: 2 } });
+    Object.defineProperty(window, 'localStorage', { value: { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } } });
+  }
+  </script>
+  <script src="js/levels.js"></script>
+  <script src="js/fx-data.js"></script>
+  <script src="js/vendor/three.min.js"></script>
+  <script src="js/cutscenes.js"></script>
+  <script src="js/game.js"></script>
+  <script>
+  (function () {
+    const q = new URLSearchParams(location.search), R = window.__ragebait, mode = q.get('mode') || 'single';
+    window.addEventListener('error', (e) => console.error('PAGE ERROR ' + e.message));
+    if (q.get('touch')) { document.getElementById('touch').hidden = false; dispatchEvent(new Event('resize')); }
+    if (q.get('calm')) R.save.calm = true;
+    if (q.get('win')) {
+      R.load(+q.get('win') - 1, mode); R.game.level.win(); R.step(240);
+      console.log('FLOW after win: ' + R.game.state + ' cut=' + (R.game.cut && R.game.cut.s.id));
+      if (R.game.cut) R.game.cut.t = 99;
+      setTimeout(() => console.log('FLOW after cut: ' + R.game.state + ' level ' + (R.game.level && R.game.level.idx)), 400);
+      return;
+    }
+    if (q.get('cut')) { R.game.setMode(mode); R.playCut(q.get('cut'), () => { R.game.state = 'title'; }); if (R.game.cut) R.game.cut.t = +(q.get('t') || 0); return; }
+    const st = q.get('state');
+    if (st) { R.game.state = st; R.game.kTab = +(q.get('tab') || 0); R.game.setMode(mode); if (q.get('t')) R.game.time = +q.get('t'); return; }
+    R.load(+(q.get('level') || 1) - 1, mode);
+    const run = +(q.get('run') || 0);
+    if (run) { R.ctl[0].right = true; R.step(run); R.ctl[0].right = false; }
+    if (q.get('die')) R.game.level.kill();
+  })();
+  </script>
+</body>
+</html>

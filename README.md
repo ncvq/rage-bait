@@ -11,17 +11,36 @@ No build step. Open `index.html` in a browser, or serve the folder:
 python3 -m http.server 8000
 ```
 
-then visit http://localhost:8000.
+then visit http://localhost:8000. Online 2-player needs the relay server (see [Online play](#online-play)); everything else works from a file or any static server.
 
 ## Modes
 
 | Mode | Players | What happens |
 |------|---------|--------------|
 | Single player | 1 | You vs. the level. |
-| Multiplayer | 2, one keyboard | Both players have to reach the portal. If either dies, both restart. |
-| Special | 2, one keyboard | Shown as a mystery on the menu. When it starts, the players find out they're chained together: the chain is about 4 tiles long, a player standing on ground anchors a falling partner, and a dangling player can jump off the chain to climb back up. One player reaching the portal takes both through. |
+| Multiplayer | 2, one keyboard or online | Both players have to reach the portal. If either dies, both restart. |
+| Special | 2, one keyboard or online | Shown as a mystery on the menu. When it starts, the players find out they're chained together: the chain is about 4 tiles long, a player standing on ground anchors a falling partner, and a dangling player can jump off the chain to climb back up. One player reaching the portal takes both through. |
 
 Each mode keeps its own level progress.
+
+## Online play
+
+Picking Multiplayer or Special asks **OFFLINE** (one keyboard or 2 controllers, as before), **HOST ONLINE** or **JOIN ONLINE**. The host gets a 4-letter room code and the partner types it in. The game starts at the host's saved level, with the host as RED and the guest as BLUE. Online, every movement key, a controller or the touch buttons move your own knight. R restarts the level for both of you. Esc opens the level select, and while it's open your partner's game waits and tells them why. Either of you can pick a level, and it takes you both there. The unlocked levels go up to the furthest either of you had reached when you joined, plus anything you clear together. LEAVE (X) on that screen leaves the room, which ends it for both.
+
+How it works: both browsers run the whole game and swap only their inputs (lockstep). Every input is played a few ticks late on both sides, so the two games stay identical. The delay is set from a ping when the game starts (about half the round trip, plus some slack), and if one side falls behind, the other waits and shows "waiting for your partner...". Twice a second the host compares the knights' positions with the guest's. If they ever differ, the level restarts on both.
+
+### Hosting the relay (Cloudflare)
+
+`server/relay.mjs` is a Cloudflare Worker with a Durable Object per room code that passes each player's messages to the other. `wrangler.jsonc` deploys it and serves the game's files from the same Worker. Its build step copies `index.html`, `style.css`, `js/` and `assets/` into `dist/` (git-ignored), and only `dist/` is served. It used to serve the whole repo, and then `wrangler dev` restarted whenever anything in `.git` changed (VS Code's git integration does this often), which dropped every room ("lost the connection").
+
+```bash
+npx wrangler dev      # try it: open http://localhost:8787 in two tabs, host in one, join in the other
+npx wrangler deploy   # publish
+```
+
+If the game stays somewhere else (Cloudflare Pages, itch.io), deploy the Worker anyway and set `NET_URL` at the top of the online section in `js/game.js` to `wss://<your-worker>.workers.dev/net`. Opened from a file, the game has no relay and says so.
+
+Cost: each player sends about 60 small messages a second while playing. Durable Objects bill incoming WebSocket messages at 20 per request, so an hour of online play is about 21,600 requests.
 
 ## Controls
 
@@ -34,7 +53,7 @@ Each mode keeps its own level progress.
 R restarts, Esc opens level select, M mutes. On the mode screen, L picks a level and P opens the knights screen: local profiles (N new, E rename, X delete), each with its own save, ranked by furthest level and by deaths.
 
 ` (backtick) on the title or mode screen opens the **admin panel**: play any level, unlock all, god mode, slow motion (1x / 0.5x / 0.25x), and reset save data. Its settings last for the session only; levels played with unlock-all on don't save progress, and N skips the current level.
-On touch devices, on-screen buttons appear for single player (a ▼ FIRE button shows while you hold the lazer). Progress and death counts are saved in `localStorage`.
+On touch devices, on-screen buttons appear for single player and for online play (a ▼ FIRE button shows while you hold the lazer). Progress and death counts are saved in `localStorage`.
 
 ## Courses
 
@@ -113,6 +132,8 @@ The Mimic is the final exam. In phase 1 it's a chest on legs that hides among cr
 - `js/game.js`: engine (physics, collision, traps, rendering, audio, menus)
 - `js/levels.js`: level scripts; the header comment documents the level API
 - `tests/solve.js`: Playwright bot that proves all 30 levels are beatable (`node tests/solve.js multi 3` runs one level)
+- `server/relay.mjs`, `wrangler.jsonc`: the online relay (a Cloudflare Worker + Durable Object) and its deploy config
+- `tests/net.js`: two copies of the game playing online through the relay's real `Room` class, checked tick for tick
 
 ## Making levels
 

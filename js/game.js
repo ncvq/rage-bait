@@ -304,11 +304,14 @@
 
   // ---------------------------------------------------------------- input
   // ctl[i] is what player i is holding; pressed[i] holds fresh jump presses.
-  const ctl = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
-  const pressed = [new Set(), new Set()];
+  // Online, every device feeds slot 2 (this browser's player); ctl/pressed 0 and 1 are then set per tick by netSteps().
+  const ctl = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
+  const pressed = [new Set(), new Set(), new Set()];
   const down = new Set();
   const touch = { left: false, right: false, jump: false, fire: false };
-  const pad = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
+  const pad = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
+  // online play (see netOpen): on = a lockstep game is running, me = which player this browser is
+  const net = { on: false, ws: null, host: false, me: 0, code: '', view: 'pick', sel: 0, note: '', err: '', delay: 0, tick: 0, sent: 0, q: [], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, top: 1 };
   const padPrev = [{}, {}];
   let padCount = 0, hadPad = false;
   const KEYMAP = {
@@ -318,12 +321,12 @@
   };
   const P2_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
   // in 2-player modes the arrow keys belong to player 2; everything else is player 1
-  function owner(code) { return MODE[game.mode].players > 1 && P2_KEYS.has(code) ? 1 : 0; }
+  function owner(code) { return net.on ? 2 : MODE[game.mode].players > 1 && P2_KEYS.has(code) ? 1 : 0; }
   function syncCtl() {
     for (const c of ctl) c.left = c.right = c.jump = c.fire = false;
     for (const code of down) { const k = KEYMAP[code]; if (k) ctl[owner(code)][k] = true; }
-    for (const k in touch) if (touch[k]) ctl[0][k] = true;
-    for (let i = 0; i < 2; i++) for (const k in pad[i]) if (pad[i][k]) ctl[i][k] = true;
+    for (const k in touch) if (touch[k]) ctl[net.on ? 2 : 0][k] = true;
+    for (let i = 0; i < pad.length; i++) for (const k in pad[i]) if (pad[i][k]) ctl[i][k] = true;
   }
   function pollPads() {
     const raw = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : null;
@@ -332,15 +335,16 @@
     if (!padCount) {
       if (!hadPad) return;
       hadPad = false;
-      for (let i = 0; i < 2; i++) { pad[i].left = pad[i].right = pad[i].jump = false; padPrev[i] = {}; }
+      for (const q of pad) q.left = q.right = q.jump = false;
+      padPrev[0] = {}; padPrev[1] = {};
       syncCtl();
       return;
     }
     hadPad = true;
     const multi = MODE[game.mode].players > 1;
-    for (let i = 0; i < 2; i++) pad[i].left = pad[i].right = pad[i].jump = false;
+    for (const q of pad) q.left = q.right = q.jump = false;
     gps.slice(0, 2).forEach((gp, idx) => {
-      const slot = multi ? idx : 0, b = gp.buttons || [], ax = gp.axes || [];
+      const slot = net.on ? 2 : multi ? idx : 0, b = gp.buttons || [], ax = gp.axes || [];
       const btn = (n) => !!(b[n] && (b[n].pressed || b[n].value > 0.5));
       const cur = {
         left: btn(14) || (ax[0] || 0) < -0.35,
@@ -389,6 +393,14 @@
       } else if (!e.repeat && (e.code === 'Enter' || e.code === 'Escape')) onKey(e.code);
       return;
     }
+    if (game.state === 'net' && net.view === 'code') {   // typing a room code
+      e.preventDefault();
+      const ch = e.key.toUpperCase();
+      if (e.key === 'Backspace') net.code = net.code.slice(0, -1);
+      else if (/^[A-Z]$/.test(ch) && net.code.length < 4) net.code += ch;
+      else if (!e.repeat && (e.code === 'Enter' || e.code === 'Escape')) onKey(e.code);
+      return;
+    }
     const k = KEYMAP[e.code];
     if (k) {
       if (!down.has(e.code)) { down.add(e.code); if (k === 'jump' || k === 'fire') pressed[owner(e.code)].add(k); }
@@ -408,7 +420,7 @@
       e.preventDefault(); audioOn(); btn.classList.add('on');
       if (k === 'restart') { onKey('KeyR'); return; }
       if (k === 'menu') { onKey('Escape'); return; }
-      if (!touch[k] && (k === 'jump' || k === 'fire')) pressed[0].add(k);
+      if (!touch[k] && (k === 'jump' || k === 'fire')) pressed[net.on ? 2 : 0].add(k);
       touch[k] = true; syncCtl();
       if (k === 'jump' && game.state !== 'play') onKey('Enter');
     };
@@ -1026,7 +1038,7 @@
 
     kill(p = this.active()[0], cause = 'restart', src = null) {
       if (this.over || !p || this.cine) return;
-      if (admin.god && cause !== 'fell' && cause !== 'restart') return;
+      if (admin.god && !net.on && cause !== 'fell' && cause !== 'restart') return;
       if (this.lives > 0 && cause !== 'restart') {   // a boss fight: a hit costs a life (or the sword), the last one ends the run
         if (p.hurtT > 0 && cause !== 'fell') return;
         if (p.parry && cause !== 'fell') return this.parried(p, src);
@@ -1168,13 +1180,13 @@
   // ---------------------------------------------------------------- game state
   const game = {
     ckpt: null,   // { k: level key, phase } while a boss fight is under way
-    state: 'title', // title | mode | select | play | end | knights | name | admin | cutscene
+    state: 'title', // title | mode | net | select | play | end | knights | name | admin | cutscene
     tSel: 0, oSel: 0, exitT: -9,   // title button, settings row, when EXIT was pressed
     kTab: 0, kId: 0, kBack: 'title', kConfirm: null, kNote: '', name: '', nameFresh: false, nameFor: null,   // knights screen
     mode: 'single', modeSel: 0,
     level: null, idx: 0, sel: 0, scrollY: 0, targetScrollY: 0, message: null, time: 0, strikes: 0, runDeaths: [0, 0],
     reached() { return Math.min(save.progress[this.mode] || 1, course(this.mode).length); },
-    unlocked() { return admin.unlock ? course(this.mode).length : this.reached(); },
+    unlocked() { return admin.unlock ? course(this.mode).length : Math.max(this.reached(), net.on ? net.top : 0); },   // online: at least the furthest either of you had got
     clearInput() { pressed[0].clear(); pressed[1].clear(); },
     setMode(id) { this.mode = id; syncCtl(); },
     start(idx, keepMessage = false) {
@@ -1285,8 +1297,8 @@
       if (code === 'ArrowLeft' || code === 'KeyA' || code === 'ArrowUp' || code === 'KeyW') { game.modeSel = Math.max(0, game.modeSel - 1); sfx.click(); }
       if (go) {
         sfx.click(); game.setMode(MODES[game.modeSel].id);
-        const i = game.reached() - 1;
-        if (i === 0) playCut('intro', () => game.start(0)); else game.start(i);   // a fresh run opens at the castle
+        if (MODE[game.mode].players > 1) { net.view = 'pick'; net.sel = 0; net.note = ''; game.state = 'net'; }   // offline or online first
+        else playMode();
       }
       if (code === 'KeyL') {
         sfx.click();
@@ -1296,6 +1308,20 @@
         updateSelectScroll(true);
       }
       if (code === 'Escape') game.state = 'title';
+    } else if (game.state === 'net') {
+      if (net.view === 'code') {
+        if (code === 'Enter' && net.code.length === 4) { sfx.click(); netOpen(net.code, false); }
+        if (code === 'Escape') net.view = 'pick';
+      } else if (net.view === 'wait') {
+        if (code === 'Escape') { sfx.click(); netEnd(''); }
+      } else {
+        const n = NET_ROWS.length, was = net.sel;
+        if (code === 'ArrowDown' || code === 'KeyS') net.sel = (net.sel + 1) % n;
+        if (code === 'ArrowUp' || code === 'KeyW') net.sel = (net.sel + n - 1) % n;
+        if (net.sel !== was) sfx.click();
+        if (go) { sfx.click(); NET_ROWS[net.sel].act(); }
+        if (code === 'Escape') game.state = 'mode';
+      }
     } else if (game.state === 'select') {
       const n = game.unlocked();
       const prevSel = game.sel;
@@ -1307,14 +1333,18 @@
         sfx.click();
         updateSelectScroll();
       }
-      if (go) { sfx.click(); game.start(game.sel); }
-      if (code === 'Escape') game.state = 'mode';
+      if (go && net.on) { sfx.click(); net.pick = game.sel; netMenu(false); }   // goes out with the next inputs: both knights go there on the same tick
+      else if (go) { sfx.click(); game.start(game.sel); }
+      if (code === 'Escape') { if (net.on) netMenu(false); else game.state = 'mode'; }
+      if (code === 'KeyX' && net.on) { sfx.click(); netEnd('you left the room.'); }
     } else if (game.state === 'play' && game.level.cine) {
       if (game.level.cine.t > 0.5 && (go || code === 'Escape')) game.level.endCine();
     } else if (game.state === 'play') {
-      if (code === 'KeyR' && !game.level.won) { if (game.level.mode.players > 1) game.restart(); else game.level.kill(); }
-      if (code === 'KeyN' && admin.unlock && !game.level.won && !game.level.over) game.level.win();
+      if (code === 'KeyR' && net.on) net.restart = true;   // goes out with the next inputs, so both restart on the same tick
+      else if (code === 'KeyR' && !game.level.won) { if (game.level.mode.players > 1) game.restart(); else game.level.kill(); }
+      if (code === 'KeyN' && admin.unlock && !net.on && !game.level.won && !game.level.over) game.level.win();
       if (code === 'Escape') {
+        if (net.on) netMenu(true);
         game.state = 'select';
         game.sel = game.idx;
         updateSelectScroll(true);
@@ -1322,8 +1352,12 @@
     } else if (game.state === 'cutscene') {
       if (game.cut && game.cut.t > 0.5 && (go || code === 'Escape')) endCut();   // a short grace so a held jump doesn't skip it
     } else if (game.state === 'end') {
-      if (go || code === 'Escape') game.state = 'mode';
+      if (go || code === 'Escape') { if (net.on) netEnd(''); game.state = 'mode'; }
     }
+  }
+  function playMode() {
+    const i = game.reached() - 1;
+    if (i === 0) playCut('intro', () => game.start(0)); else game.start(i);   // a fresh run opens at the castle
   }
 
   // clicks / taps on menus & wheel scrolling
@@ -1345,6 +1379,13 @@
       }
       if (game.state === 'name') { askName(); return; }
       if (game.state === 'mode' && hitR(KBTN.mode, x, y)) { onKey('KeyP'); return; }
+      if (game.state === 'net') {
+        const i = NET_ROWS.findIndex((_, j) => hitR(netRow(j), x, y));
+        if (net.view === 'pick' && i >= 0) { net.sel = i; onKey('Enter'); }
+        else if (net.view === 'code' && y >= 90) askCode();
+        else if (y < 90) onKey('Escape');
+        return;
+      }
       if (game.state === 'title') {
         const i = TITLE_BTNS.findIndex((_, j) => hitR(titleBtn(j), x, y));
         if (i >= 0) { game.tSel = i; onKey('Enter'); } else if (y > VH - 44 && x > VW - 120) onKey('Backquote');
@@ -1363,6 +1404,7 @@
         else if (y < 90) onKey('Escape');
       } else if (game.state === 'select') {
         const i = selectHit(x, y);
+        if (net.on && hitR(NET_LEAVE, x, y)) { onKey('KeyX'); return; }
         if (i >= 0 && i < game.unlocked()) { game.sel = i; updateSelectScroll(); onKey('Enter'); }
         else if (y < 90) onKey('Escape');
       } else if (game.state === 'cutscene') { if (x > SKIP.x && y < SKIP.y + SKIP.h) onKey('Enter'); }
@@ -2010,7 +2052,8 @@
     }
     ctx.fillStyle = 'rgba(10,8,12,0.8)'; ctx.fillRect(0, VH - 28, VW, 28);
     const hint = padCount ? 'stick move · A jump · Y restart · start levels' : !touchEl.hidden && !two ? '◀ ▶ move · ▲ jump · R restart · ESC levels' : `${two ? 'P1 A D W · P2 ← → ↑' : '← → move · space jump'} · R restart · esc levels · M mute`;
-    text(hint, VW / 2, VH - 14, 12, 'rgba(232,220,192,0.7)');
+    text(net.on ? `ONLINE · room ${net.code} · you are ${SKINS[net.me].name} · R restart · esc levels` : hint, VW / 2, VH - 14, 12, 'rgba(232,220,192,0.7)');
+    if (net.on && net.stall > 0.3) text(net.menu ? 'your partner is picking a level...' : 'waiting for your partner...', VW / 2, VH - 48, 16, C.portal, 'center', null, '#0a080c');
     const tags = [admin.unlock && 'N skip', admin.god && 'GOD', admin.speed !== 1 && `${admin.speed}x`].filter(Boolean);
     if (tags.length) text(`ADMIN: ${tags.join(' · ')}`, VW - 10, barH + 16, 12, C.danger, 'right');
   }
@@ -2250,6 +2293,131 @@
     text(padCount ? 'A ok · B cancel' : 'type a name · ENTER ok · ESC cancel', VW / 2, 350, 16, C.dim);
   }
 
+  // ---------------------------------------------------------------- online 2-player (relay: server/relay.mjs)
+  // Lockstep: both browsers run the whole game and trade only inputs. The input for tick t is sent ahead and used
+  // `delay` ticks later on both sides; no tick runs before both players' inputs for it are in. The 2-player sim
+  // is deterministic (fixed STEP, no Math.random, no save data), so both stay identical; a position hash every
+  // half second catches a drift (e.g. Math.hypot differing between browsers) and restarts the level on both.
+  const NET_URL = '';   // '' = the relay on this same site (wrangler.jsonc); set 'wss://<worker>/net' if the game is hosted elsewhere
+  const NET_ROWS = [
+    { label: 'OFFLINE', sub: 'one keyboard or 2 controllers', act() { playMode(); } },
+    { label: 'HOST ONLINE', sub: 'get a code for your partner', act() { netOpen(Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 24)]).join(''), true); } },
+    { label: 'JOIN ONLINE', sub: "type your partner's code", act() { net.view = 'code'; net.code = ''; net.note = ''; if (!touchEl.hidden && !padCount) askCode(); } },
+    { label: 'BACK', sub: '', act() { game.state = 'mode'; } },
+  ];
+  const NET_LEAVE = { x: VW - 180, y: 10, w: 166, h: 36 };   // on the level select, online
+  const netRow = (i) => ({ x: VW / 2 - 200, y: 150 + i * 56, w: 400, h: 46 });
+  const netSend = (m) => { if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify(m)); };
+  const netHash = () => `${game.idx}:` + game.level.players.map((p) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)},${p.dead ? 1 : 0}`).join(':');
+  function netOpen(code, host) {
+    netEnd('');
+    const base = NET_URL || (/^https?:$/.test(location.protocol) ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/net` : '');
+    if (!base) { net.note = 'online play needs the hosted game (opened from a file it has no server)'; return; }
+    let ws;
+    try { ws = new WebSocket(`${base}/${code}${host ? '?host=1' : ''}`); } catch (e) { net.note = "couldn't reach the server."; return; }
+    Object.assign(net, { ws, host, code, view: 'wait', err: '', note: host ? 'waiting for your partner...' : 'connecting...' });
+    ws.onmessage = (e) => { if (net.ws === ws) netMsg(JSON.parse(e.data)); };
+    ws.onclose = () => { if (net.ws === ws) netEnd(net.err || (net.on ? 'lost the connection.' : "couldn't reach the server.")); };
+  }
+  function netMsg(m) {
+    const them = 1 - net.me;
+    if (m.t === 'in') m.i.forEach((v, k) => net.q[them].set(m.s + k, v));
+    else if (m.t === 'h') netCheck(m.k, m.h);
+    else if (m.t === 'sync') net.sync = m;
+    else if (m.t === 'peer') { if (net.host) netSend({ t: 'ping', at: performance.now() }); else net.note = 'connected. starting...'; }
+    else if (m.t === 'ping') netSend({ t: 'pong', at: m.at, prog: save.progress });
+    else if (m.t === 'menu') net.menu = m.on;
+    else if (m.t === 'pong') {   // the host sets the input delay from the round trip: half of it in ticks, plus some slack for jitter
+      const go = { t: 'go', mode: game.mode, idx: game.reached() - 1, d: clamp(Math.ceil((performance.now() - m.at) * 0.06) + 4, 6, 36), prog: save.progress };
+      netSend(go); netGo({ ...go, prog: m.prog });   // each side keeps the other's progress (it unlocks levels)
+    } else if (m.t === 'go') netGo(m);
+    else if (m.t === 'left') netEnd('your partner left.');
+    else if (m.t === 'err') net.err = m.m;
+  }
+  function netGo(m) {
+    Object.assign(net, { on: true, me: net.host ? 0 : 1, delay: m.d, tick: 0, sent: m.d, q: [new Map(), new Map()], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, note: '' });
+    net.top = Math.min(course(m.mode).length, Math.max(save.progress[m.mode] || 1, (m.prog || {})[m.mode] || 1));   // the same on both sides
+    for (let t = 0; t < m.d; t++) { net.q[0].set(t, 0); net.q[1].set(t, 0); }   // the first `delay` ticks: nobody is pressing anything
+    acc = 0; pressed[2].clear();
+    game.setMode(m.mode); game.start(m.idx);
+  }
+  // the host compares its hash for tick k with the guest's (whichever comes first waits for the other)
+  function netCheck(k, h) {
+    if (k <= net.after) return;   // from before the last resync
+    if (!net.hs.has(k)) { net.hs.set(k, h); return; }
+    const mine = net.hs.get(k); net.hs.delete(k);
+    if (mine !== h && !net.sync) { net.sync = { t: 'sync', k: net.sent, idx: game.idx }; netSend(net.sync); }   // the guest can't be past tick `sent` yet
+  }
+  function netEnd(note) {
+    const ws = net.ws;
+    net.ws = null; net.on = false; net.view = 'pick'; net.note = note;
+    if (ws) { ws.onclose = null; try { ws.close(); } catch (e) { /* ignore */ } }
+    if (game.cut) { CUT.end(game.cut.s); game.cut = null; }
+    if (game.state === 'play' || game.state === 'cutscene' || game.state === 'select') game.state = 'net';
+    syncCtl();
+  }
+  // one frame of online play: queue this browser's input `delay` ticks ahead, then run every tick both inputs are in for
+  function netSteps(dt) {
+    syncCtl();
+    const c = ctl[2], held = (c.left ? 1 : 0) | (c.right ? 2 : 0) | (c.jump ? 4 : 0) | (c.fire ? 8 : 0);
+    let edge = (pressed[2].has('jump') ? 16 : 0) | (pressed[2].has('fire') ? 32 : 0) | (net.restart ? 64 : 0) | (net.pick + 1) << 7;   // bits 7+: a level pick (index + 1)
+    const s = net.sent, out = [];
+    while (net.sent < net.tick + net.delay) { net.q[net.me].set(net.sent++, held | edge); out.push(held | edge); edge = 0; }
+    if (out.length) { pressed[2].clear(); net.restart = false; net.pick = -1; netSend({ t: 'in', s, i: out }); }
+    let n = 0;
+    while (acc >= STEP && game.state === 'play' && net.q[1 - net.me].has(net.tick)) {
+      if (net.sync && net.sync.k === net.tick) {
+        net.after = net.tick; net.hs.clear(); game.start(net.sync.idx); net.sync = null;
+        game.message = { text: 'out of sync. restarting the level.', t: 0 };
+      }
+      const v = [0, 1].map((i) => { const x = net.q[i].get(net.tick); net.q[i].delete(net.tick); return x; });
+      const pk = (v[0] >> 7) || (v[1] >> 7);   // a level pick (the host's wins a tie)
+      if (pk) game.start(pk - 1);
+      else if ((v[0] | v[1]) & 64 && !game.level.won) game.restart();   // R from either player
+      v.forEach((x, i) => {
+        Object.assign(ctl[i], { left: !!(x & 1), right: !!(x & 2), jump: !!(x & 4), fire: !!(x & 8) });
+        if (x & 16) pressed[i].add('jump');
+        if (x & 32) pressed[i].add('fire');
+      });
+      game.level.step(STEP); acc -= STEP; n++;
+      if (++net.tick % 60 === 0) { const h = netHash(); if (net.host) netCheck(net.tick, h); else netSend({ t: 'h', k: net.tick, h }); }
+    }
+    net.stall = n ? 0 : net.stall + dt;
+    acc = Math.min(acc, STEP * 12);   // time spent waiting isn't banked for a burst later
+  }
+  // online, the level select pauses this side (so the partner waits); the partner is told why
+  function netMenu(on) {
+    netSend({ t: 'menu', on });
+    if (on) { game.state = 'select'; game.sel = game.idx; updateSelectScroll(true); } else game.state = 'play';
+  }
+  function askCode() {
+    const c = window.prompt("Your partner's room code", net.code);
+    if (c === null) { net.view = 'pick'; return; }
+    net.code = c.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); onKey('Enter');
+  }
+  function drawNet(t) {
+    menuBg(t);
+    text(MODE[game.mode].name, VW / 2, 70, 48, C.portal, 'center', null, '#2a0a0a');
+    text('one keyboard, or two of you online', VW / 2, 112, 14, C.dim);
+    if (net.view === 'pick') {
+      NET_ROWS.forEach((it, i) => {
+        const r = netRow(i), on = i === net.sel;
+        panel(r.x, r.y, r.w, r.h, on);
+        text(it.label, r.x + 24, r.y + r.h / 2, 16, on ? C.portal : C.text, 'left');
+      });
+      text(NET_ROWS[net.sel].sub, VW / 2, 400, 16, C.dim);
+    } else {
+      const typing = net.view === 'code';
+      panel(VW / 2 - 220, 170, 440, 130, true);
+      text(typing ? "PARTNER'S CODE" : net.host ? 'YOUR ROOM CODE' : 'JOINING ROOM', VW / 2, 198, 16, C.dim);
+      text(net.code + (typing && net.code.length < 4 && Math.sin(t * 6) > 0 ? '_' : ''), VW / 2, 252, 64, C.text, 'center', null, '#0a080c');
+      if (!typing && net.host) text('tell your partner this code. they pick JOIN ONLINE.', VW / 2, 330, 16, C.text);
+    }
+    if (net.note) text(net.note, VW / 2, 440, 16, net.view === 'wait' ? C.portal : C.danger, 'center', null, '#0a080c');
+    const hint = net.view === 'code' ? 'type the code · ENTER join · ESC back' : net.view === 'wait' ? 'ESC cancel' : padCount ? '↑/↓ choose · A ok · B back' : '↑/↓ choose · ENTER ok · ESC back';
+    text(hint, VW / 2, VH - 30, 14, C.dim, 'center', null, '#0a080c');
+  }
+
   const SEL = { cols: 5, w: 120, h: 86, gapX: 24, gapY: 14, viewTop: 116, viewBottom: 404 };
   function rowStep() { return SEL.h + SEL.gapY; }
   function maxSelectScroll() {
@@ -2297,7 +2465,8 @@
   function drawSelect(t) {
     menuBg(t, areaOf(game.sel));
     text('PICK YOUR POISON', VW / 2, 45, 36, C.player, 'center', null, '#1a0408');
-    text(`${MODE[game.mode].name} · ESC back · ↑/↓/Wheel to scroll`, VW / 2, 82, 13, C.dim, 'center', null, '#0a080c');
+    text(net.on ? 'ENTER takes you both there · ESC back to the game' : `${MODE[game.mode].name} · ESC back · ↑/↓/Wheel to scroll`, VW / 2, 82, 13, C.dim, 'center', null, '#0a080c');
+    if (net.on) { const b = NET_LEAVE; panel(b.x, b.y, b.w, b.h); text('LEAVE (X)', b.x + b.w / 2, b.y + b.h / 2, 16, C.danger); }
 
     // Smooth scroll interpolation
     game.scrollY = approach(game.scrollY, game.targetScrollY, 20);
@@ -2393,7 +2562,7 @@
     });
     const m = MODES[game.modeSel];
     text(padCount ? `Controller${padCount > 1 ? `s (${padCount})` : ''} connected · Stick/D-pad move · A jump` : m.hint, VW / 2, MCARD.top + MCARD.h + 45, 15, C.portal, 'center', null, '#0a080c');
-    if (m.players > 1 && matchMedia('(pointer: coarse)').matches && padCount < 2) text('2-player modes need a keyboard or 2 controllers', VW / 2, MCARD.top + MCARD.h + 72, 13, C.danger, 'center', 'normal');
+    if (m.players > 1 && matchMedia('(pointer: coarse)').matches && padCount < 2) text('2-player modes: play online, or use a keyboard or 2 controllers', VW / 2, MCARD.top + MCARD.h + 72, 13, C.danger, 'center', 'normal');
     text(padCount ? '←/→ choose · A play · Y pick level · B back' : '←/→ choose · ENTER play · L pick level · ESC back', VW / 2, VH - 30, 14, C.dim, 'center', null, '#0a080c');
   }
 
@@ -2420,7 +2589,8 @@
     pollPads();
     if (game.state === 'play') {
       acc += dt * admin.speed;
-      while (acc >= STEP) { game.level.step(STEP); acc -= STEP; }
+      if (net.on) netSteps(dt);
+      else while (acc >= STEP) { game.level.step(STEP); acc -= STEP; }
     }
     updateParticles(dt);
     updateFx(dt);
@@ -2436,6 +2606,7 @@
     else if (game.state === 'knights') drawKnights(game.time);
     else if (game.state === 'settings') drawSettings(game.time);
     else if (game.state === 'name') drawName(game.time);
+    else if (game.state === 'net') drawNet(game.time);
     else if (game.state === 'play') drawLevel(game.level);
     else if (game.state === 'cutscene') drawCut(game.cut);
     else drawEnd(game.time);
@@ -2447,7 +2618,7 @@
 
   // deterministic hooks for automated tests (no effect on normal play)
   window.__ragebait = {
-    game, save, knights, key: onKey, useKnight, addKnight, deleteKnight, playCut, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed, pollPads,
+    game, save, knights, net, key: onKey, useKnight, addKnight, deleteKnight, playCut, keys: ctl[0], pressed: pressed[0], ctl, pressedAll: pressed, pollPads,
     load(i, mode = 'single') { game.setMode(mode); game.start(i); },
     step(n = 1) { for (let i = 0; i < n; i++) game.level.step(STEP); },
     STEP,

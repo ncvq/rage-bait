@@ -7,6 +7,8 @@
        ?win=N[&mode=...]   finish level N and log where the game goes next (console: FLOW ...)
        &seen=1 skip the boss intros   &defeat=1[&t=SECONDS] a boss's defeat cutscene   &qte=strike|mash a quick-time prompt
        ?state=knights&knights=1[&tab=0-3]   the leaderboard with demo knights (in memory only)
+       ?state=net&mode=multi[&room=ABCD]   the offline / online picker (room: hosting, waiting for a partner)
+       &online=1   a level as online play, stalled waiting for the partner (the online HUD); with state=select, the online level select (6 unlocked)
        &touch=1   show the touch buttons     &calm=1   reduce flashing on -->
 <html lang="en">
 <head>
@@ -66,9 +68,10 @@
     }
     if (q.get('cut')) { R.game.setMode(mode); R.playCut(q.get('cut'), () => { R.game.state = 'title'; }); if (R.game.cut) R.game.cut.t = +(q.get('t') || 0); return; }
     const st = q.get('state');
-    if (st) { R.game.state = st; R.game.kTab = +(q.get('tab') || 0); R.game.setMode(mode); if (q.get('t')) R.game.time = +q.get('t'); return; }
+    if (st) { R.game.state = st; R.game.kTab = +(q.get('tab') || 0); R.game.setMode(mode); if (q.get('t')) R.game.time = +q.get('t'); if (q.get('room')) Object.assign(R.net, { view: 'wait', host: true, code: q.get('room'), note: 'waiting for your partner...' }); if (q.get('online')) Object.assign(R.net, { on: true, code: 'ABCD', top: 6 }); return; }
     if (q.get('seen')) R.save.seen = { warden: 1, undertaker: 1, gnasher: 1, mimicBoss: 1 };
     R.load(+(q.get('level') || 1) - 1, mode);
+    if (q.get('online')) Object.assign(R.net, { on: true, host: true, me: 0, code: 'ABCD', delay: 8, q: [new Map(), new Map()], stall: 1 });
     if (q.get('phase')) { const i = +q.get('level') - 1; R.game.ckpt = { k: mode === 'single' ? String(i) : `${mode}:${i}`, phase: +q.get('phase') }; R.game.restart(); }
     const run = +(q.get('run') || 0);
     if (run) { R.ctl[0].right = true; R.step(run); R.ctl[0].right = false; }

@@ -311,7 +311,7 @@
   const touch = { left: false, right: false, jump: false, fire: false };
   const pad = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
   // online play (see netOpen): on = a lockstep game is running, me = which player this browser is
-  const net = { on: false, ws: null, host: false, me: 0, code: '', view: 'pick', sel: 0, note: '', err: '', delay: 0, tick: 0, sent: 0, q: [], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, top: 1, rtt: 0, pings: 0 };
+  const net = { on: false, ws: null, host: false, me: 0, code: '', view: 'pick', sel: 0, note: '', err: '', delay: 0, tick: 0, sent: 0, q: [], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, top: 1, rtt: 0, pings: 0, pred: null };
   const padPrev = [{}, {}];
   let padCount = 0, hadPad = false;
   const KEYMAP = {
@@ -834,8 +834,9 @@
       }
     }
 
-    stepPlayer(p, dt) {
-      const g = this.g, src = this.swap ? 1 - p.idx : p.idx, c = ctl[src], pr = pressed[src];
+    // inp: { c, pr } instead of the player's controls. this.dry: a prediction (netPredict), so nothing outside p changes
+    stepPlayer(p, dt, inp) {
+      const g = this.g, src = this.swap ? 1 - p.idx : p.idx, c = inp ? inp.c : ctl[src], pr = inp ? inp.pr : pressed[src], dry = this.dry;
       const x0 = p.x;
       let dir = (c.right ? 1 : 0) - (c.left ? 1 : 0);
       if (this.invert) dir = -dir;
@@ -858,20 +859,23 @@
       if (p.djT > 0) p.djT -= dt;
       const air = !(p.coy > 0 || p.hang > 0) && p.djT > 0 && p.airJump;   // the feather: one more jump in the air
       if (p.buf > 0 && (p.coy > 0 || p.hang > 0 || air)) {
-        if (air) { p.airJump = false; burst(p.x + p.w / 2, p.y + p.h, '#e8dcc0', 10, 4); }
+        if (air) { p.airJump = false; if (!dry) burst(p.x + p.w / 2, p.y + p.h, '#e8dcc0', 10, 4); }
         p.vy = -P.jump * g; p.buf = 0; p.coy = 0; p.hang = 0; p.grounded = false; p.ground = null;
-        p.jumping = !p.lagged; p.cut = false; p.sx = 0.7; p.sy = 1.3; sfx.jump();
-        const was = this.cur; this.cur = p;
-        for (const fn of this.jumpHooks) fn(p);
-        this.cur = was;
+        p.jumping = !p.lagged; p.cut = false; p.sx = 0.7; p.sy = 1.3;
+        if (!dry) {
+          sfx.jump();
+          const was = this.cur; this.cur = p;
+          for (const fn of this.jumpHooks) fn(p);
+          this.cur = was;
+        }
       }
       if (p.jumping && !p.cut && !c.jump && p.vy * g < 0) { p.vy *= 0.5; p.cut = true; }
       // the lazer: its aim sweeps the upper half back and forth, and DOWN fires it along that line
-      if (p.laser) {
+      if (p.laser && !dry) {
         p.laser.a += p.laser.dir * 1.7 * dt;
         if (p.laser.a > -0.15) { p.laser.a = -0.15; p.laser.dir = -1; } else if (p.laser.a < -Math.PI + 0.15) { p.laser.a = -Math.PI + 0.15; p.laser.dir = 1; }
       }
-      if (pr.has('fire')) { pr.delete('fire'); if (p.laser) this.fireLaser(p); }
+      if (pr.has('fire')) { pr.delete('fire'); if (p.laser && !dry) this.fireLaser(p); }
 
       p.vy = clamp(p.vy + P.grav * g * dt, -P.maxFall, P.maxFall);
       // ladders: hold jump to climb, otherwise slide down slowly
@@ -881,8 +885,8 @@
       p.x += (p.vx + this.wind) * dt;
       for (const b of this.blocks) {
         if (!solid(b) || !overlap(p, b)) continue;
-        if (b.crate && p.vx && this.pushCrate(b, p.vx > 0 ? p.x + p.w - b.x : p.x - (b.x + b.w))) continue;
-        this.reveal(b);
+        if (b.crate && p.vx && !dry && this.pushCrate(b, p.vx > 0 ? p.x + p.w - b.x : p.x - (b.x + b.w))) continue;
+        if (!dry) this.reveal(b);
         if (p.vx > 0) p.x = b.x - p.w; else if (p.vx < 0) p.x = b.x + b.w;
         p.vx = 0;
       }
@@ -897,7 +901,7 @@
       for (const b of this.blocks) {
         if (!overlap(p, b)) continue;
         if (!solid(b)) { if (!b.gone && !b.hidden && !b.ghost) p.fakeT = this.t; continue; }   // fell through a block that looked solid
-        this.reveal(b);
+        if (!dry) this.reveal(b);
         if (p.vy > 0) p.y = b.y - p.h; else if (p.vy < 0) p.y = b.y + b.h;
         if (p.vy * g > 0) { p.grounded = true; p.ground = b; }
         p.vy = 0;
@@ -905,7 +909,7 @@
       // players can stand on each other's heads
       if (p.vy * g >= 0) {
         for (const q of this.active()) {
-          if (q === p || !overlap(p, q)) continue;
+          if (q.idx === p.idx || !overlap(p, q)) continue;   // idx, not identity: a prediction is a copy
           const head = g > 0 ? q.y : q.y + q.h;
           if (g > 0 ? foot0 <= head + 0.12 : foot0 >= head - 0.12) {
             p.y = g > 0 ? q.y - p.h : q.y + q.h;
@@ -1957,7 +1961,7 @@
     // level text sits above blocks with a dark outline so gates/ceilings never cut it off
     for (const tx of L.texts) text(tx.str, tx.x * TILE, tx.y * TILE, 18, AREAS[n].text, 'left', null, '#0a080c');
     if (L.chained) drawChain(L);
-    for (const p of L.players) drawPlayer(p, L);
+    for (const p of L.players) drawPlayer(net.pred && p.idx === net.me ? net.pred : p, L);   // online: your knight as predicted
     for (const f of fxs) drawFx(f.name, f.t, f.x, f.y);
     for (const p of particles) {
       ctx.globalAlpha = clamp(1 - p.t / p.life, 0, 1);
@@ -1969,7 +1973,7 @@
     const darkR = L.dark || (save.calm && L.lastDark && L.t - L.lastDarkT < 0.4 ? L.lastDark : 0);
     if (darkR) {
       if (!L.dark) ctx.globalAlpha = 0.55;
-      const p = L.cur, cx = sn((p.x + p.w / 2) * TILE), cy = sn((p.y + p.h / 2) * TILE), rpx = Math.round((darkR * TILE) / PX), art = darkArt(rpx);
+      const p = net.pred && L.cur && L.cur.idx === net.me ? net.pred : L.cur, cx = sn((p.x + p.w / 2) * TILE), cy = sn((p.y + p.h / 2) * TILE), rpx = Math.round((darkR * TILE) / PX), art = darkArt(rpx);
       const x0 = cx - art.width, y0 = cy - art.height, x1 = x0 + art.width * PX, y1 = y0 + art.height * PX;
       ctx.drawImage(art, x0, y0, art.width * PX, art.height * PX);
       ctx.fillStyle = '#05050e';
@@ -2304,10 +2308,15 @@
     { label: 'OFFLINE', sub: 'one keyboard or 2 controllers', act() { playMode(); } },
     { label: 'HOST ONLINE', sub: 'get a code for your partner', act() { netOpen(Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 24)]).join(''), true); } },
     { label: 'JOIN ONLINE', sub: "type your partner's code", act() { net.view = 'code'; net.code = ''; net.note = ''; if (!touchEl.hidden && !padCount) askCode(); } },
+    {
+      get label() { return `CONTROLS: ${save.snappy ? 'SNAPPY' : 'SMOOTH'}`; },
+      get sub() { return save.snappy ? 'online: 50 ms less delay, more slow-downs' : 'online: steadier, a little more delay'; },
+      act() { save.snappy = !save.snappy; persist(); },
+    },
     { label: 'BACK', sub: '', act() { game.state = 'mode'; } },
   ];
   const NET_LEAVE = { x: VW - 180, y: 10, w: 166, h: 36 };   // on the level select, online
-  const netRow = (i) => ({ x: VW / 2 - 200, y: 150 + i * 56, w: 400, h: 46 });
+  const netRow = (i) => ({ x: VW / 2 - 200, y: 140 + i * 54, w: 400, h: 46 });
   const netSend = (m) => { if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify(m)); };
   const netHash = () => `${game.idx}:` + game.level.players.map((p) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)},${p.dead ? 1 : 0}`).join(':');
   function netOpen(code, host) {
@@ -2325,21 +2334,23 @@
     else if (m.t === 'h') netCheck(m.k, m.h);
     else if (m.t === 'sync') net.sync = m;
     else if (m.t === 'peer') { if (net.host) { net.rtt = 0; net.pings = 0; netSend({ t: 'ping', at: performance.now() }); } else net.note = 'connected. starting...'; }
-    else if (m.t === 'ping') netSend({ t: 'pong', at: m.at, prog: save.progress });
+    else if (m.t === 'ping') netSend({ t: 'pong', at: m.at, prog: save.progress, snappy: !!save.snappy });
     else if (m.t === 'menu') net.menu = m.on;
     else if (m.t === 'pong') {   // the host pings 3 times; the input delay is half the slowest round trip in ticks, plus slack for frames and jitter
       net.rtt = Math.max(net.rtt, performance.now() - m.at);
       if (++net.pings < 3) { netSend({ t: 'ping', at: performance.now() }); return; }
-      const go = { t: 'go', mode: game.mode, idx: game.reached() - 1, d: clamp(Math.ceil(net.rtt * 0.06) + 7, 8, 40), prog: save.progress };
+      const d = clamp(Math.ceil(net.rtt * 0.06) + 10, 8, 40), mine = (snappy) => Math.max(6, d - (snappy ? 6 : 0));
+      const go = { t: 'go', mode: game.mode, idx: game.reached() - 1, d: [mine(save.snappy), mine(m.snappy)], prog: save.progress };   // each player's own choice
       netSend(go); netGo({ ...go, prog: m.prog });   // each side keeps the other's progress (it unlocks levels)
     } else if (m.t === 'go') netGo(m);
     else if (m.t === 'left') netEnd('your partner left.');
     else if (m.t === 'err') net.err = m.m;
   }
   function netGo(m) {
-    Object.assign(net, { on: true, me: net.host ? 0 : 1, delay: m.d, tick: 0, sent: m.d, q: [new Map(), new Map()], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, note: '' });
+    const me = net.host ? 0 : 1;   // m.d: how far ahead each player sends its own inputs (its SMOOTH / SNAPPY choice)
+    Object.assign(net, { on: true, me, delay: m.d[me], tick: 0, sent: m.d[me], pred: null, q: [new Map(), new Map()], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, note: '' });
     net.top = Math.min(course(m.mode).length, Math.max(save.progress[m.mode] || 1, (m.prog || {})[m.mode] || 1));   // the same on both sides
-    for (let t = 0; t < m.d; t++) { net.q[0].set(t, 0); net.q[1].set(t, 0); }   // the first `delay` ticks: nobody is pressing anything
+    for (const i of [0, 1]) for (let t = 0; t < m.d[i]; t++) net.q[i].set(t, 0);   // each player's first ticks: nothing pressed
     acc = 0; pressed[2].clear();
     game.setMode(m.mode); game.start(m.idx);
   }
@@ -2352,7 +2363,7 @@
   }
   function netEnd(note) {
     const ws = net.ws;
-    net.ws = null; net.on = false; net.view = 'pick'; net.note = note;
+    net.ws = null; net.on = false; net.pred = null; net.view = 'pick'; net.note = note;
     if (ws) { ws.onclose = null; try { ws.close(); } catch (e) { /* ignore */ } }
     if (game.cut) { CUT.end(game.cut.s); game.cut = null; }
     if (game.state === 'play' || game.state === 'cutscene' || game.state === 'select') game.state = 'net';
@@ -2366,8 +2377,15 @@
     const s = net.sent, out = [];
     while (net.sent < net.tick + net.delay) { net.q[net.me].set(net.sent++, held | edge); out.push(held | edge); edge = 0; }
     if (out.length) { pressed[2].clear(); net.restart = false; net.pick = -1; netSend({ t: 'in', s, i: out }); }
+    // pacing: running right up to the partner's newest input made every late packet a freeze, and the catch-up after
+    // it a jump of up to 12 ticks in one frame. Now catch-up is at most about one extra tick a frame, and when fewer
+    // than 5 frames of the partner's inputs are in hand it runs at half speed instead of running dry (acc keeps the debt)
+    const them = net.q[1 - net.me], per = Math.round(dt / STEP * 4) / 4;   // ticks a frame at full speed
+    let ahead = 0;
+    while (ahead < 64 && them.has(net.tick + ahead)) ahead++;
+    const max = per * (ahead < per * 5 ? 0.5 : 1.25);
     let n = 0;
-    while (acc >= STEP && game.state === 'play' && net.q[1 - net.me].has(net.tick)) {
+    while (acc >= STEP && n < max && game.state === 'play' && them.has(net.tick)) {
       if (net.sync && net.sync.k === net.tick) {
         net.after = net.tick; net.hs.clear(); game.start(net.sync.idx); net.sync = null;
         game.message = { text: 'out of sync. restarting the level.', t: 0 };
@@ -2385,12 +2403,30 @@
       if (++net.tick % 60 === 0) { const h = netHash(); if (net.host) netCheck(net.tick, h); else netSend({ t: 'h', k: net.tick, h }); }
     }
     net.stall = n ? 0 : net.stall + dt;
+    net.pred = game.state === 'play' ? netPredict(game.level) : null;
     acc = Math.min(acc, STEP * 12);   // time spent waiting isn't banked for a burst later
   }
   // online, the level select pauses this side (so the partner waits); the partner is told why
   function netMenu(on) {
     netSend({ t: 'menu', on });
     if (on) { game.state = 'select'; game.sel = game.idx; updateSelectScroll(true); } else game.state = 'play';
+  }
+  // Multiplayer: your own knight, run ahead through the inputs you've queued but the shared game hasn't reached yet,
+  // so it answers your keys at once. Dry: traps, crates and your partner don't react to it, and the level isn't run
+  // ahead, so it snaps back when the real game disagrees (a troll, a moving platform). Not when chained or swapped.
+  function netPredict(L) {
+    const real = L.players[net.me], mine = net.q[net.me];
+    if (L.chained || L.swap || L.over || L.won || L.qte || L.cine || !real || real.dead || real.done) return null;
+    const p = { ...real, jq: real.jq.slice() }, c = { left: false, right: false, jump: false }, pr = new Set(pressed[net.me]), t0 = L.t;
+    L.dry = true;
+    for (let t = net.tick; t < net.sent; t++) {
+      const x = mine.get(t);
+      c.left = !!(x & 1); c.right = !!(x & 2); c.jump = !!(x & 4);
+      if (x & 16) pr.add('jump');
+      L.t += STEP; L.stepPlayer(p, STEP, { c, pr });
+    }
+    L.dry = false; L.t = t0;
+    return p;
   }
   function askCode() {
     const c = window.prompt("Your partner's room code", net.code);
@@ -2407,7 +2443,7 @@
         panel(r.x, r.y, r.w, r.h, on);
         text(it.label, r.x + 24, r.y + r.h / 2, 16, on ? C.portal : C.text, 'left');
       });
-      text(NET_ROWS[net.sel].sub, VW / 2, 400, 16, C.dim);
+      text(NET_ROWS[net.sel].sub, VW / 2, 432, 16, C.dim);
     } else {
       const typing = net.view === 'code';
       panel(VW / 2 - 220, 170, 440, 130, true);
@@ -2415,7 +2451,7 @@
       text(net.code + (typing && net.code.length < 4 && Math.sin(t * 6) > 0 ? '_' : ''), VW / 2, 252, 64, C.text, 'center', null, '#0a080c');
       if (!typing && net.host) text('tell your partner this code. they pick JOIN ONLINE.', VW / 2, 330, 16, C.text);
     }
-    if (net.note) text(net.note, VW / 2, 440, 16, net.view === 'wait' ? C.portal : C.danger, 'center', null, '#0a080c');
+    if (net.note) text(net.note, VW / 2, 466, 16, net.view === 'wait' ? C.portal : C.danger, 'center', null, '#0a080c');
     const hint = net.view === 'code' ? 'type the code · ENTER join · ESC back' : net.view === 'wait' ? 'ESC cancel' : padCount ? '↑/↓ choose · A ok · B back' : '↑/↓ choose · ENTER ok · ESC back';
     text(hint, VW / 2, VH - 30, 14, C.dim, 'center', null, '#0a080c');
   }

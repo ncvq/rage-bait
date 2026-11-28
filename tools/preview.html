@@ -68,7 +68,7 @@
     }
     if (q.get('cut')) { R.game.setMode(mode); R.playCut(q.get('cut'), () => { R.game.state = 'title'; }); if (R.game.cut) R.game.cut.t = +(q.get('t') || 0); return; }
     const st = q.get('state');
-    if (st) { R.game.state = st; R.game.kTab = +(q.get('tab') || 0); R.game.setMode(mode); if (q.get('t')) R.game.time = +q.get('t'); if (q.get('room')) Object.assign(R.net, { view: 'wait', host: true, code: q.get('room'), note: 'waiting for your partner...' }); if (q.get('online')) Object.assign(R.net, { on: true, code: 'ABCD', top: 6 }); return; }
+    if (st) { R.game.state = st; R.game.kTab = +(q.get('tab') || 0); R.game.setMode(mode); if (q.get('t')) R.game.time = +q.get('t'); if (q.get('sel')) R.net.sel = +q.get('sel'); if (q.get('room')) Object.assign(R.net, { view: 'wait', host: true, code: q.get('room'), note: 'waiting for your partner...' }); if (q.get('online')) Object.assign(R.net, { on: true, code: 'ABCD', top: 6 }); return; }
     if (q.get('seen')) R.save.seen = { warden: 1, undertaker: 1, gnasher: 1, mimicBoss: 1 };
     R.load(+(q.get('level') || 1) - 1, mode);
     if (q.get('online')) Object.assign(R.net, { on: true, host: true, me: 0, code: 'ABCD', delay: 8, q: [new Map(), new Map()], stall: 1 });

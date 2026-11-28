@@ -70,7 +70,7 @@ const root = path.resolve(__dirname, '..');
   const bad = [], chk = (ok, msg) => { if (!ok) { bad.push(msg); console.log(`[net] ${msg}`); } };
   const A = boot('host'), B = boot('guest');
   const seen = [new Map(), new Map()];   // tick -> state, sampled at the end of each frame
-  const state = (X) => { const L = X.R.game.level; return `${X.R.game.idx}|${L.t.toFixed(4)}|` + L.players.map((p) => `${p.x},${p.y},${p.vx},${p.vy},${p.dead}`).join('|'); };
+  const state = (X) => { const L = X.R.game.level; return `${X.R.game.idx}|${L.t.toFixed(4)}|${X.R.game.runDeaths}|${X.R.game.strikes}|` + L.players.map((p) => `${p.x},${p.y},${p.vx},${p.vy},${p.dead}`).join('|'); };
   const frame = () => {
     clock += 1000 / 60;
     due.sort((a, b) => a[0] - b[0]);
@@ -94,6 +94,7 @@ const root = path.resolve(__dirname, '..');
   // host a room on the multiplayer course at the host's saved level, and join it
   A.R.save.progress.multi = 4;   // Two Keys: random play dies there, three times strikes back to level 3
   B.R.save.progress.multi = 6;   // the guest got further: online, both may pick up to level 6
+  B.R.save.snappy = true;        // and plays SNAPPY: it sends its own inputs 6 ticks less ahead than the host
   A.R.game.state = 'mode'; A.R.game.modeSel = 1; A.R.key('Enter'); A.R.net.sel = 1; A.R.key('Enter');
   const code = A.R.net.code;
   chk(/^[A-Z]{4}$/.test(code) && A.R.net.view === 'wait', `hosting gave code "${code}" view ${A.R.net.view}`);
@@ -105,7 +106,13 @@ const root = path.resolve(__dirname, '..');
   run(2);   // three pings through the lag, then go
   chk(A.R.net.on && B.R.net.on && A.R.game.state === 'play' && B.R.game.state === 'play', `did not start: host ${A.R.game.state}/${A.R.net.on}, guest ${B.R.game.state}/${B.R.net.on} "${B.R.net.note}"`);
   chk(A.R.game.idx === 3 && B.R.game.idx === 3 && B.R.game.mode === 'multi', `guest is on ${B.R.game.mode} ${B.R.game.idx + 1}, host on ${A.R.game.idx + 1}`);
-  chk(A.R.net.me === 0 && B.R.net.me === 1 && A.R.net.delay === B.R.net.delay, `roles ${A.R.net.me}/${B.R.net.me}, delay ${A.R.net.delay}/${B.R.net.delay}`);
+  chk(A.R.net.me === 0 && B.R.net.me === 1 && A.R.net.delay - B.R.net.delay === 6, `roles ${A.R.net.me}/${B.R.net.me}, delay host ${A.R.net.delay} / snappy guest ${B.R.net.delay}`);
+
+  // the guest runs right: its own knight is drawn ahead of the shared game (its queued inputs), the host's isn't predicted on its screen
+  B.down('ArrowRight'); run(0.4);
+  const bp = B.R.net.pred, br = B.R.game.level.players[1];
+  chk(bp && bp.idx === 1 && bp.x > br.x + 0.5 && !A.R.net.pred === false && A.R.net.pred.idx === 0, `prediction: guest drawn at ${bp && bp.x.toFixed(2)}, shared game at ${br.x.toFixed(2)}`);
+  B.up('ArrowRight'); run(1);
 
   watch(A, 0); watch(B, 1);
   // a third knight can't get in
@@ -133,12 +140,13 @@ const root = path.resolve(__dirname, '..');
   chk(common > 300 && !diff, `${diff} of ${common} shared ticks differ. ${first}`);
   chk(A.R.net.after === -1 && B.R.net.after === -1, `a resync fired during clean play (host ${A.R.net.after}, guest ${B.R.net.after})`);
   const ran = A.R.net.tick - t0;
-  chk(ran > 25 * 120 * 0.85, `only ${ran} ticks in 25 s (${(ran / 30).toFixed(0)}% speed)`);
-  chk(A.R.save.deaths > deaths0 && A.R.save.deaths - deaths0 === B.R.save.deaths, `deaths: host +${A.R.save.deaths - deaths0}, guest +${B.R.save.deaths}`);
+  chk(ran > 25 * 120 * 0.75, `only ${ran} ticks in 25 s (${(ran / 30).toFixed(0)}% speed)`);   // the guest plays SNAPPY: less delay, more slow-downs
+  chk(A.R.save.deaths > deaths0, 'nobody died in 25 s of random play');   // that both agree on them is in the per-tick states
   chk(lv && A.R.game.level !== lv[0] && B.R.game.level !== lv[1], 'R on the guest did not restart both');
 
   // a drift on the guest: the hash check must catch it and restart the level on both, then they agree again
-  B.R.game.level.players[1].x += 3;
+  for (let f = 0; f < 600 && (A.R.game.level.over || B.R.game.level.over); f++) frame();   // not while a death restarts the level (that would undo the drift)
+  B.R.game.level.players[1].dead = true;   // (a shifted x can be undone by a wall the knight is pressed against)
   seen[0].clear(); seen[1].clear();
   run(3);
   chk(A.R.net.after > 0 && A.R.net.after === B.R.net.after, `no resync after a drift (host ${A.R.net.after}, guest ${B.R.net.after})`);

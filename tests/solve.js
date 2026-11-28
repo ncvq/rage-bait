@@ -68,23 +68,26 @@ const run = ([onlyCourse, onlyLevel]) => {
   // rects (x, y, w, h live from t0 to t1). True if nothing touches it. floor = the y the knight stands on.
   const planSafe = (p, dir, jump, projs, rects, T = 0.8, floor = 15, hop = false, to = null, out = null, jumpAt = 0) => {
     const now = jump && !jumpAt;   // jumpAt: run first (turning is quicker on the ground), jump that many seconds from now
-    let x = p.x, vx = p.vx, y = p.y, vy = now ? -20.5 : p.grounded ? 0 : p.vy, grounded = p.grounded && !now, stomped = false, jumped = now;
+    let x = p.x, vx = p.vx, y = p.y, vy = now ? -20.5 : p.grounded ? 0 : p.vy, grounded = p.grounded && !now, stomped = false, jumped = now, cut = false;
+    const mul = p.mul || 1;   // boots (or cursed ones): speedMul
     const qs = projs.map((q) => ({ ...q }));
     for (let i = 1; i <= T * 120; i++) {
       if (to !== null) dir = Math.abs(to - (x + 0.4)) < 0.15 ? 0 : Math.sign(to - (x + 0.4));   // run to a spot and stop
-      const dt = 1 / 120, t = i * dt, want = dir * 8, acc = (grounded ? (dir ? 90 : 80) : 60) * dt;
+      const dt = 1 / 120, t = i * dt, want = dir * 8 * mul, acc = (grounded ? (dir ? 90 : 80) : 60) * mul * dt;
       vx = vx < want ? Math.min(want, vx + acc) : Math.max(want, vx - acc);
       x = Math.max(p.minX === undefined ? 1 : p.minX, Math.min((p.maxX === undefined ? 31 : p.maxX) - 0.8, x + (vx + (p.wind || 0)) * dt));   // a current pushes too
       if (grounded && ((hop && jumped) || (jumpAt && !jumped && i / 120 >= jumpAt))) { vy = -20.5; grounded = false; jumped = true; }   // hop again / jump later
-      if (!grounded) { vy = Math.min(vy + 62 * dt, 28); y += vy * dt; if (y >= floor - 0.9) { y = floor - 0.9; vy = 0; grounded = true; } }
+      if (jumped && p.cutAt && !cut && t >= p.cutAt && vy < 0) { vy *= 0.5; cut = true; }   // a short hop: jump let go of early
+      if (!grounded) { vy = Math.min(vy + 62 * dt, 28); y += vy * dt; if (y >= floor - 0.9) { y = floor - 0.9; vy = 0; grounded = true; if (out && out.land === undefined) out.land = x + 0.4; } }
       if (grounded && p.pits && p.pits.some(([a, z]) => x > a - 0.05 && x + 0.8 < z + 0.05)) return false;   // fell in a pit
       for (const q of qs) {
         if (t < (q.spawn || 0) || q.done || (q.life !== undefined && t > q.life + (q.spawn || 0))) continue;
         if (q.homing) q.vx = Math.max(-q.homing.vmax, Math.min(q.homing.vmax, q.vx + Math.sign(x + 0.4 - q.x) * q.homing.a * dt));
         q.vy = (q.vy || 0) + (q.g || 0) * dt; q.x += q.vx * dt; q.y += q.vy * dt;
         if (q.bounceY !== undefined && q.y > q.bounceY) { q.y = q.bounceY; q.vy = q.bounceVy; }
-        const cx = Math.max(x, Math.min(x + 0.8, q.x)), cy = Math.max(y, Math.min(y + 0.9, q.y));
-        if (Math.hypot(q.x - cx, q.y - cy) < q.r * 0.85) {
+        const cx = Math.max(x, Math.min(x + 0.8, q.x)), cy = Math.max(y, Math.min(y + 0.9, q.y)), dq = Math.hypot(q.x - cx, q.y - cy);
+        if (out) out.clear = Math.min(out.clear === undefined ? 9 : out.clear, dq - q.r * 0.85);   // how close it came
+        if (dq < q.r * 0.85) {
           if (q.stomp && vy > 0 && y + 0.9 < q.y - 0.12) { q.done = true; stomped = true; vy = -14; continue; }   // landed on it
           return false;
         }
@@ -104,6 +107,14 @@ const run = ([onlyCourse, onlyLevel]) => {
     const m = (y) => 18 - y;
     const pm = { x: p.x, y: m(p.y + p.h), vx: p.vx, vy: -p.vy, grounded: p.grounded };
     return planSafe(pm, dir, jump, projs.map((q) => ({ ...q, y: m(q.y), vy: -(q.vy || 0) })), rects.map((r) => ({ ...r, y: m(r.y + r.h) })), 0.8, 15);
+  };
+  // up onto block s from the floor: stand just outside its edge, jump straight up, steer in once above it
+  // (a running jump would hit its head on the underside)
+  const climb = (L, k, s) => {
+    const p = L.player, side = L.px < s.x + s.w / 2 ? -1 : 1, spot = side < 0 ? s.x - 0.5 : s.x + s.w + 0.5;
+    if (!p.grounded) { if (p.y + p.h < s.y - 0.02) { if (side < 0) k.right = 1; else k.left = 1; } return false; }
+    if (Math.abs(L.px - spot) > 0.15) { goX(L, k, spot, 0.1); return false; }
+    return Math.abs(p.vx) < 1;
   };
   // ---- end boss bot helpers
   const crusherSafe = (L, o) => { const ph = (L.t + o) % 1.8; return ph > 1.18 && ph < 1.28; };
@@ -167,6 +178,88 @@ const run = ([onlyCourse, onlyLevel]) => {
     k.left = edge || (st.on && !g && L.px > 23.8) || (!st.on && L.px > 26.6);
     return J(st, 'on', edge);
   });
+  // The Mimic in the air (phases 2-3): fire the lazer when its sweeping aim crosses the chest; when the floor turns
+  // to lava, get up on the nearest plain rock; otherwise fetch a lazer (on the floor, or up on plain rock), and dodge
+  // the coins with the planner, from floor spots that aren't under any rock (a dodge jump there hits its head)
+  const mimicAir = (L, k, st, b) => {
+    const p = L.player, g = p.grounded, px = L.px, py = L.py, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+    if (p.laser && b.fly && b.inv <= 0 && by < py && !['roar', 'sprout'].includes(b.state)) {
+      const want = Math.atan2(by - py, bx - px), tol = Math.max(0.03, Math.atan2(0.55, Math.hypot(bx - px, by - py)));
+      if (Math.abs(p.laser.a - want) < tol) R.pressed.add('fire');
+    }
+    const rock = L.blocks.filter((s) => s.edge && s.h < 1 && s.solid && !s.crumble && !s.trap);
+    const on = g && p.ground && p.ground.y < 14 ? p.ground : null;
+    const lava = L.hz.some((h) => h.atk === 'rising') || L.marks.some((m) => m.w >= 29);
+    // the floor is three stretches between the pits, each with one plain rock: never climb across a pit
+    const seg = (x) => (x < 10 ? 0 : x < 22 ? 1 : 2), mine = rock.find((s) => seg(s.x + s.w / 2) === seg(px));
+    if (lava && !on) return climb(L, k, mine);
+    const lz = !p.laser && L.pickups.find((q) => q.type === 'laser');
+    const lzRock = lz && rock.find((s) => lz.x + 0.4 > s.x && lz.x + 0.4 < s.x + s.w && Math.abs(s.y - (lz.y + 1)) < 0.3);
+    if (lz && lzRock === mine && !on) return climb(L, k, mine);
+    let goal;   // dodging comes first: the rain's gap, out from under a swoop; then the lazer; then a spot to wait in
+    if (b.state === 'rainTell' || L.hz.some((h) => h.atk === 'rain' && h.y < 12)) goal = b.gap;
+    else if (b.state === 'swoopTell' || b.state === 'swoop') {   // staying on this stretch
+      const c = b.to.x + b.w / 2, side = (px >= c ? 1 : -1) * ((seg(c + 3.5 * (px >= c ? 1 : -1)) === seg(px)) ? 1 : -1);
+      goal = c + side * 3.5;
+    }
+    else if (lz && (on ? lzRock === on : lz.y > 13 || (lzRock && lzRock !== mine))) goal = lzRock && !on ? lzRock.x + lzRock.w / 2 : lz.x + 0.4;   // over to its stretch first
+    else if (on && !lava) goal = px < on.x + on.w / 2 ? on.x - 0.7 : on.x + on.w + 0.7;   // back down off the rock
+    else if (on) goal = Math.max(on.x + 0.3, Math.min(on.x + on.w - 0.3, px));
+    else {   // a spot on the stretch of floor we're on (not across a pit), not under rock, about 6 tiles off the chest
+      const seg = px < 10 ? [1.8, 7] : px < 22 ? [12.5, 19.5] : [25, 30.2];
+      goal = seg.reduce((a, c) => (Math.abs(Math.abs(c - bx) - 6) < Math.abs(Math.abs(a - bx) - 6) ? c : a));
+    }
+    st.goal = goal;
+    const projs = L.hz.filter((h) => h.atk === 'barrage' || h.atk === 'rain').map((h) => ({ x: h.x, y: h.y, r: h.r + 0.06, vx: h.vx, vy: h.vy }));
+    const rects = [{ x: b.x - 0.25, y: b.y - 0.25, w: b.w + 0.5, h: b.h + 0.5, t0: 0, t1: 9 }];
+    for (const q of L.pickups) if (q.fake) rects.push({ x: q.x - 0.1, y: q.y - 0.1, w: 1, h: 1, t0: 0, t1: 9 });   // perfect information: fakes are hazards
+    if (b.state === 'swoopTell' || b.state === 'swoop') rects.push({ x: b.to.x - 0.4, y: b.to.y - 0.4, w: b.w + 0.8, h: b.h + 0.8, t0: 0, t1: 1.3 });
+    if (b.state === 'swoop') { const left = Math.max(0.05, 0.45 - b.st); rects.push({ x: b.x - 0.3, y: b.y - 0.3, w: b.w + 0.6, h: b.h + 0.6, t0: 0, t1: left, vx: (b.to.x - b.x) / left, vy: (b.to.y - b.y) / left }); }   // its dive
+    const floor = on ? on.y : 15, pw = { mul: L.speedMul, x: p.x, y: p.y, vx: p.vx, vy: p.vy, grounded: g, minX: on && lava ? on.x - 0.3 : 1, maxX: on && lava ? on.x + on.w + 0.3 : 31, pits: on ? null : BOSSES.mimicBoss.pits };
+    if (!g) {   // in the air: steer clear of coins, but never so it comes down in a pit
+      const keep = st.plan ? st.plan.dir : Math.sign(goal - px), clear = (x) => on || x === undefined || !BOSSES.mimicBoss.pits.some(([a, z]) => x > a - 0.45 && x < z + 0.45);
+      for (const dir of [keep, 0, 1, -1]) { const end = {}; if (planSafe(pw, dir, false, projs, rects, 0.6, floor, false, null, end) && clear(end.land)) { if (dir > 0) k.right = 1; if (dir < 0) k.left = 1; return false; } }
+      if (keep > 0) k.right = 1; if (keep < 0) k.left = 1;
+      return false;
+    }
+    st.plan = null;
+    if (on && !lava && !(lz && lzRock === on)) { goX(L, k, goal, 0.1); return false; }   // nothing up here: step off
+    const pitEdge = (x) => !on && BOSSES.mimicBoss.pits.some(([a, z]) => x > a - 0.45 && x < z + 0.45);
+    if (!on && seg(goal) !== seg(px)) {   // the goal is across a pit: jump it once the jump lands clear (take a run at it)
+      const d = Math.sign(goal - px), pits = BOSSES.mimicBoss.pits, pit = pits[d > 0 ? seg(px) : seg(px) - 1], edge = d > 0 ? pit[0] : pit[1];
+      const crust = pit[0] < 15, end = {};   // the left pit has solid crust over it: only a short hop fits under
+      if (planSafe({ ...pw, cutAt: crust ? 0.06 : 0 }, d, true, projs, rects, 1.0, 15, false, null, end) && end.land !== undefined && !pits.some(([a, z]) => end.land > a - 0.6 && end.land < z + 0.6)) {
+        if (d > 0) k.right = 1; else k.left = 1;
+        st.plan = { dir: d }; return crust ? 7 : true;
+      }
+      const gap = Math.abs(edge - px);
+      if (gap < 2.6 && gap > 0.55 && planSafe(pw, d, false, projs, rects, 0.4, 15)) { if (d > 0) k.right = 1; else k.left = 1; return false; }
+    }
+    // every plan: run to a spot within 6 tiles and stop, or jump (a short hop under rock: a full jump hits its head).
+    // Of the safe ones, take the one the coins come least close to, then the one nearest the goal
+    const roofed = L.blocks.some((s) => s.edge && s.h < 1 && s.solid && s.y < floor - 1 && s.y > floor - 4.5 && px > s.x - 0.5 && px < s.x + s.w + 0.5);
+    const gd = Math.sign(goal - px) || 1;
+    let best = null;
+    const consider = (plan, score) => { if (!best || score > best.score) best = { ...plan, score }; };
+    for (let d = -6; d <= 6; d++) {
+      const x = d ? px + d : goal;
+      if (x < 1.5 || x > 30.5 || (on && (x < on.x - 0.3 || x > on.x + on.w + 0.3)) || pitEdge(x)) continue;
+      const end = {};
+      if (planSafe(pw, 0, false, projs, rects, 1.0, floor, false, x, end)) consider({ to: x }, Math.min(1.2, end.clear === undefined ? 9 : end.clear) - Math.abs(x - goal) * 0.04);
+    }
+    for (const dir of [gd, 0, -gd]) {
+      const end = {};
+      if (!planSafe(roofed ? { ...pw, cutAt: 0.06 } : pw, dir, true, projs, rects, 0.8, floor, false, null, end)) continue;
+      if (pitEdge(end.x) || (end.land !== undefined && pitEdge(end.land)) || (on && (end.x < on.x - 0.3 || end.x > on.x + on.w + 0.3))) continue;
+      consider({ dir, jump: roofed ? 7 : true }, Math.min(1.2, end.clear === undefined ? 9 : end.clear) - Math.abs(end.x - goal) * 0.04 - 0.1);
+    }
+    if (!best) return false;   // nothing safe: stand still rather than walk into a pit
+    if (best.to !== undefined) { goX(L, k, best.to, 0.12); return false; }
+    if (best.dir > 0) k.right = 1; if (best.dir < 0) k.left = 1;
+    st.plan = { dir: best.dir };
+    return best.jump;
+  };
+
   const SINGLE = [
     // 1
     (L, k, st) => { k.right = 1; return J(st, 'a', L.px > 16.2); },
@@ -670,6 +763,7 @@ const run = ([onlyCourse, onlyLevel]) => {
       const q = qteBot(L, k, st); if (q !== null) return q;
       const b = L.bosses[0];
       if (L.cine || !b || b.dead || b.state === 'dying') return false;
+      if (b.fly || b.state === 'sprout') return mimicAir(L, k, st, b);
       const p = L.player, g = p.grounded, px = L.px, mc = b.x + b.w / 2;
       const projs = L.hz.filter((h) => h.atk === 'coins' && h.live).map((h) => ({ x: h.x, y: h.y, r: h.r + 0.1, vx: h.vx, vy: h.vy, g: 40 }));
       const rects = [];
@@ -1788,13 +1882,14 @@ const run = ([onlyCourse, onlyLevel]) => {
     const k = R.keys; let st = {}, deaths = 0;
     for (let n = 0; n < 120 * 600; n++) {   // bosses take minutes (intros and retries included)
       const L = R.game.level;
-      // a boss is played like a player would: die, and go again from the checkpoint (a new seed), up to 8 lives
+      // a boss is played like a player would: lose a run (5 lives), and go again from phase 1 (a new seed), up to 8 runs
       if (L.over && L.bosses.length && ++deaths < 8) { R.game.restart(); st = {}; continue; }
       if (L.over) return `DEAD at px=${L.px.toFixed(2)} py=${L.py.toFixed(2)}`;
-      if (L.won) return `won t=${L.t.toFixed(2)}${deaths ? ` after ${deaths} deaths` : ''}`;
+      if (L.won) return `won t=${L.t.toFixed(2)}${deaths ? ` after ${deaths} lost runs` : ''}`;
       k.left = 0; k.right = 0;
       const j = SINGLE[i](L, k, st);
       k.left = !!k.left; k.right = !!k.right;
+      if (L.invert && L.bosses.length) [k.left, k.right] = [k.right, k.left];   // a boss's WRONG WAY hex: the bots know
       // a policy returns true for a full jump, or a step count for a short tap
       if (j) { k.jump = true; R.pressed.add('jump'); st.hold = j === true ? 60 : j; }
       if (st.hold > 0) { st.hold--; k.jump = true; } else k.jump = false;
@@ -1927,21 +2022,39 @@ const run = ([onlyCourse, onlyLevel]) => {
       window.prompt = oldPrompt;
       chk('knights', k.list.find((q) => q.id === home).name === 'SIR TEST' && k.cur === home && R.game.state === 'knights', 'rename failed');
       k.list.find((q) => q.id === home).name = oldName;
-      // bosses: a hit sets the checkpoint, dying restarts in that phase, a fresh visit starts over; deaths name the boss
-      // 6 hits in phases of 2; every attack hitbox has its own death line; the intro plays once per knight
+      // bosses: 5 lives; a hit costs one (and blinks), the last one ends the run, and a new run starts at phase 1
+      // with 5 lives again; the death count (the seed) only moves when a run ends. 6 hits in phases of 2; every
+      // attack hitbox has its own death line; the intro plays once per knight
       for (const i of [9, 19, 29, 39]) {
         R.load(i, 'single'); let L = R.game.level, b = L.bosses[0];
         chk('boss', b && b.phase === 1 && b.hp === 6 && b.perPhase === 2, `level ${i + 1}: no boss at phase 1 with 6 hp`);
         chk('boss', !L.cine, `level ${i + 1}: the intro played again for a knight who has seen it`);
+        chk('boss', L.lives === 5, `level ${i + 1}: started with ${L.lives} lives`);
         b.hidden = false; L.hitBoss(b); b.inv = 0; b.hidden = false; L.hitBoss(b);
         chk('boss', b.phase === 2 && b.hp === 4, `level ${i + 1}: two hits should start phase 2 (phase ${b.phase}, hp ${b.hp})`);
+        const d0 = L.deaths;
         L.kill(L.player, 'boss', b);
-        chk('boss', L.kind === b.id, `level ${i + 1}: boss death read as ${L.kind}`);
+        chk('boss', !L.over && L.lives === 4 && L.player.hurtT > 0 && L.deaths === d0, `level ${i + 1}: a hit should cost one life (lives ${L.lives}, over ${L.over})`);
+        L.kill(L.player, 'boss', b);
+        chk('boss', L.lives === 4, `level ${i + 1}: a hit while blinking cost a life`);
+        L.player.hurtT = 0; L.lives = 1; L.kill(L.player, 'boss', b);
+        chk('boss', L.over && L.kind === b.id && L.deaths === d0 + 1, `level ${i + 1}: the last life should end the run (over ${L.over}, kind ${L.kind})`);
         R.game.restart(); L = R.game.level; b = L.bosses[0];
-        chk('boss', b.phase === 2 && b.hp === 4, `level ${i + 1}: restart lost the checkpoint (phase ${b.phase}, hp ${b.hp})`);
-        R.load(i, 'single');
-        chk('boss', R.game.level.bosses[0].phase === 1, `level ${i + 1}: a fresh visit kept the checkpoint`);
+        chk('boss', b.phase === 1 && b.hp === 6 && L.lives === 5, `level ${i + 1}: a new run should start at phase 1 with 5 lives (phase ${b.phase}, lives ${L.lives})`);
+        chk('boss', L.pickups.length === 0 && L.blocks.some((k) => !k.solid) && L.blocks.some((k) => k.crumble), `level ${i + 1}: no fake or crumbling platform`);
       }
+      // pickups: a heart adds a life (up to 9), a fake one bites, the sword parries one hit, boots speed you up
+      { R.load(0, 'single'); const L = R.game.level, p = L.player; L.lives = 5;   // level 1: no boss, so no pickups of its own
+        const take = (type, fake) => { const k = L.pickup(type, p.x + 0.4, p.y + 0.45, { fake }); L.checkContacts(p); return k; };
+        take('heart'); chk('pickup', L.lives === 6, `a heart gave ${L.lives} lives`);
+        take('heart', 'bite'); chk('pickup', L.lives === 5 && !L.over, `a fake heart left ${L.lives} lives`);
+        p.hurtT = 0; take('sword'); chk('pickup', p.parry, 'the sword did not arm a parry');
+        L.kill(p, 'spikes', null); chk('pickup', L.lives === 5 && !p.parry, `a parry still cost a life (${L.lives})`);
+        take('boots'); for (let n = 0; n < 20; n++) L.step(R.STEP); chk('pickup', L.speedMul > 1, 'boots did not speed you up');
+        for (let n = 0; n < 120 * 6; n++) L.step(R.STEP);
+        chk('pickup', L.speedMul === 1, 'the speed boost never wore off');
+        for (let n = 0; n < 120 * 8; n++) L.pickup('heart', 99, 99, { life: 1 }) && L.step(R.STEP);
+        chk('pickup', L.pickups.length < 200, 'pickups with a life never faded'); }
       for (const k of Object.keys(window.BOSSES.lines)) chk('boss', window.BOSSES.lines[k].length > 0, `no death lines for ${k}`);
       // a first visit plays the intro; jump skips it after half a second, and the fight starts
       { const seen = R.save.seen; R.save.seen = {};

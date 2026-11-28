@@ -2,7 +2,7 @@
 <!-- Dev harness: the game, jumped straight to a screen, level or cutscene moment via the query string.
      Keep the <body> in sync with index.html. Screenshot it with tools/shot.sh.
        ?state=title|mode|select|admin|end   a menu screen   (&t=SECONDS sets the menu clock)
-       ?level=N[&mode=multi|special][&run=STEPS][&die=1][&phase=N]   a level (phase: start a boss there); run holds right for STEPS ticks (120/s)
+       ?level=N[&mode=multi|special][&run=STEPS][&die=1][&phase=N]   a level (phase: start a boss there); run holds right for STEPS ticks (120/s); at=X,Y puts the knight there (feet); wait=STEPS runs it with no input, tell=1 until a boss's attack warning is up, laser=1 hands the knight the lazer
        ?cut=intro|area1|area2|area3|ending&t=SECONDS[&mode=...]   a cutscene frame
        ?win=N[&mode=...]   finish level N and log where the game goes next (console: FLOW ...)
        &seen=1 skip the boss intros   &defeat=1[&t=SECONDS] a boss's defeat cutscene   &qte=strike|mash a quick-time prompt
@@ -28,6 +28,7 @@
     <div class="pad-right">
       <button data-key="menu" class="small" aria-label="Level select">ESC</button>
       <button data-key="restart" class="small" aria-label="Restart">R</button>
+      <button data-key="fire" hidden aria-label="Fire the lazer">&#9660;</button>
       <button data-key="jump" aria-label="Jump">&#9650;</button>
     </div>
   </div>
@@ -71,6 +72,10 @@
     if (q.get('phase')) { const i = +q.get('level') - 1; R.game.ckpt = { k: mode === 'single' ? String(i) : `${mode}:${i}`, phase: +q.get('phase') }; R.game.restart(); }
     const run = +(q.get('run') || 0);
     if (run) { R.ctl[0].right = true; R.step(run); R.ctl[0].right = false; }
+    if (q.get('at')) { const [x, y] = q.get('at').split(',').map(Number), p = R.game.level.player; p.x = x - p.w / 2; p.y = y - p.h; p.vx = p.vy = 0; }
+    if (q.get('wait')) R.step(+q.get('wait'));
+    if (q.get('laser')) R.game.level.player.laser = { a: -2.2, dir: 1 };
+    if (q.get('tell')) for (let n = 0; n < 6000 && R.game.level.bosses[0] && !(R.game.level.marks.length && R.game.level.marks[0].t > 0.15); n++) R.step(1);
     if (q.get('die')) R.game.level.kill();
     const L = R.game.level, boss = L.bosses[0];
     if (q.get('defeat') && boss) { while (!boss.dead && !L.cine) { boss.inv = 0; boss.hidden = false; L.hitBoss(boss); } L.freezeT = 0; R.step(+(q.get('t') || 0) * 120); }

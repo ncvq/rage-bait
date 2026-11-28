@@ -25,6 +25,7 @@
     { main: '#3a7ac8', dark: '#1c3e7a', hi: '#70a8e8', plume: '#ff8a2a', name: 'BLUE' },
   ];
   const STRIKES = 3; // deaths in one level (2-player modes) before you get sent back
+  const LIVES = 5, MAX_LIVES = 9;   // boss fights: lives per run, and the most hearts can top you up to
   const ROPE = 4.2; // chain length in tiles (special mode)
   const MODES = [
     {
@@ -66,6 +67,7 @@
     crushCrate: ['squished by a crate. a CRATE.', 'crate: 1, knight: 0'],
     crushed: ['squished between the walls.', 'the walls closed in. so did you.', 'pinned between two blocks.'],
     mimic: ['that was not a crate.', 'the crate bit you.', 'you touched a mimic. it touched back.'],
+    pickup: ['that heart had teeth.', 'free life. sure.', 'it was bait. it is always bait.'],
     redLight: ['you moved on red.', 'red means stop.', 'it said stop. it SAW that.'],
     restart: ['pressed R. respect.', 'self-destruct. clean.', 'starting over. wise.'],
     chainFell: ['you both went down. together.', 'til death do you part. so, now.', 'chained to dead weight.'],
@@ -75,7 +77,7 @@
   const KILLER = {
     spikes: 'spikes', ceiling: 'ceiling spikes', popped: 'hidden spikes', saw: 'saw', sawMoving: 'saw', sawBuried: 'saw',
     laser: 'laser', laserOn: 'laser', fell: 'pit', fellUp: 'sky', fakeFloor: 'fake floor', crumble: 'falling floor',
-    crushFall: 'falling block', crushGate: 'gate', crusher: 'crusher', crushCrate: 'crate', crushed: 'walls', mimic: 'mimic', redLight: 'red light',
+    crushFall: 'falling block', crushGate: 'gate', crusher: 'crusher', crushCrate: 'crate', crushed: 'walls', mimic: 'mimic', pickup: 'fake heart', redLight: 'red light',
     chainFell: 'chain', chainDropped: 'chain',
   };
   if (window.BOSSES) { Object.assign(DEATH, BOSSES.lines); Object.assign(KILLER, BOSSES.killers); }
@@ -165,6 +167,7 @@
     win: () => [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.14, 'square', 0.05, 0, i * 0.07)),
     reveal: () => tone(880, 0.08, 'triangle', 0.06, 200),
     click: () => tone(600, 0.04, 'square', 0.03),
+    laser: () => { tone(1600, 0.3, 'sawtooth', 0.06, -1200); noise(0.15, 0.08); },
   };
 
   // ---------------------------------------------------------------- music: a tiny chiptune sequencer
@@ -304,19 +307,20 @@
   const ctl = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
   const pressed = [new Set(), new Set()];
   const down = new Set();
-  const touch = { left: false, right: false, jump: false };
+  const touch = { left: false, right: false, jump: false, fire: false };
   const pad = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
   const padPrev = [{}, {}];
   let padCount = 0, hadPad = false;
   const KEYMAP = {
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
     ArrowUp: 'jump', KeyW: 'jump', Space: 'jump', KeyZ: 'jump', KeyK: 'jump',
+    ArrowDown: 'fire', KeyS: 'fire',   // fires the lazer (boss pickup)
   };
-  const P2_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp']);
+  const P2_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
   // in 2-player modes the arrow keys belong to player 2; everything else is player 1
   function owner(code) { return MODE[game.mode].players > 1 && P2_KEYS.has(code) ? 1 : 0; }
   function syncCtl() {
-    for (const c of ctl) c.left = c.right = c.jump = false;
+    for (const c of ctl) c.left = c.right = c.jump = c.fire = false;
     for (const code of down) { const k = KEYMAP[code]; if (k) ctl[owner(code)][k] = true; }
     for (const k in touch) if (touch[k]) ctl[0][k] = true;
     for (let i = 0; i < 2; i++) for (const k in pad[i]) if (pad[i][k]) ctl[i][k] = true;
@@ -357,6 +361,7 @@
         if (cur.right) pad[slot].right = true;
         if (cur.jump) pad[slot].jump = true;
         if (edge('jump')) pressed[slot].add('jump');
+        if (edge('down')) pressed[slot].add('fire');
         if (edge('aux') || edge('sel')) onKey('KeyR');
         else if (edge('pause')) onKey('Escape');
       } else {
@@ -386,7 +391,7 @@
     }
     const k = KEYMAP[e.code];
     if (k) {
-      if (!down.has(e.code)) { down.add(e.code); if (k === 'jump') pressed[owner(e.code)].add('jump'); }
+      if (!down.has(e.code)) { down.add(e.code); if (k === 'jump' || k === 'fire') pressed[owner(e.code)].add(k); }
       syncCtl(); e.preventDefault();
     }
     if (!e.repeat) onKey(e.code);
@@ -395,7 +400,7 @@
   addEventListener('blur', () => { down.clear(); touch.left = touch.right = touch.jump = false; for (const p of pad) p.left = p.right = p.jump = false; syncCtl(); });
 
   // touch buttons (always player 1)
-  const touchEl = document.getElementById('touch');
+  const touchEl = document.getElementById('touch'), fireBtn = touchEl.querySelector('[data-key="fire"]');
   if (matchMedia('(pointer: coarse)').matches) touchEl.hidden = false;
   touchEl.querySelectorAll('button').forEach((btn) => {
     const k = btn.dataset.key;
@@ -403,7 +408,7 @@
       e.preventDefault(); audioOn(); btn.classList.add('on');
       if (k === 'restart') { onKey('KeyR'); return; }
       if (k === 'menu') { onKey('Escape'); return; }
-      if (!touch[k] && k === 'jump') pressed[0].add('jump');
+      if (!touch[k] && (k === 'jump' || k === 'fire')) pressed[0].add(k);
       touch[k] = true; syncCtl();
       if (k === 'jump' && game.state !== 'play') onKey('Enter');
     };
@@ -446,7 +451,10 @@
       this.doors = []; this.texts = []; this.bubbles = [];
       this.buttons = []; this.gates = []; this.jumpHooks = []; this.bosses = [];
       this.hz = []; this.cine = null; this.qte = null; this.qteFx = null; this.freezeT = 0; this.wind = 0; this.startFns = [];
-      // boss checkpoint: dying in phase N restarts this level in phase N (the flag keeps its promise)
+      this.pickups = []; this.marks = [];
+      // boss fights: lives (0 = one-hit deaths, every other level) and the timed power-ups
+      this.lives = 0; this.boostT = 0; this.curseT = 0; this.invertT = 0; this.lightT = 0; this.darkT = 0;
+      // a boss fight starts at phase 1 every run (game.ckpt is only set by tools/preview.html's &phase=)
       this.ckKey = dkey(modeId, idx);
       this.checkpoint = game.ckpt && game.ckpt.k === this.ckKey ? game.ckpt.phase : 1;
       this.rope = ROPE; this.snagT = 0; this.view = { mirror: false, flip: false };
@@ -523,9 +531,11 @@
     }
     // A boss (js/bosses.js): the script moves it in o.update(b, dt) and hurts it with L.hitBoss. Touching it kills,
     // unless o.onTouch(b, p) handles the touch (a stunned boss starts the STRIKE quick-time event instead).
-    // hp is split into phases of perPhase hits; reaching a phase saves it as the checkpoint.
+    // hp is split into phases of perPhase hits. A single-player boss fight gives you LIVES lives: a hit costs one
+    // (see hurt), the last one ends the run, and the next run starts at phase 1: it has to be won in one go.
     boss(o) {
       const b = { kind: 'boss', hp: 3, perPhase: 1, inv: 0, hitT: -9, dead: false, hidden: false, face: -1, ...o };
+      if (this.mode.players === 1) this.lives = LIVES;
       b.max = b.hp; b.phases = Math.ceil(b.max / b.perPhase);
       b.phase = Math.min(this.checkpoint, b.phases); b.hp = b.max - (b.phase - 1) * b.perPhase;
       this.bosses.push(b); return b;
@@ -537,12 +547,36 @@
       if (b.hp > 0) {
         const ph = 1 + Math.floor((b.max - b.hp) / b.perPhase);
         if (b.onHit) b.onHit(b, by);
-        if (ph > b.phase) { b.phase = ph; game.ckpt = { k: this.ckKey, phase: ph }; if (b.onPhase) b.onPhase(b); }
+        if (ph > b.phase) { b.phase = ph; if (b.onPhase) b.onPhase(b); }
       } else if (b.onDefeat) b.onDefeat(b, by); else this.killBoss(b);
       return true;
     }
     // an attack's hitbox: a rect, or a circle when it has r (x, y = centre). h.boss + h.atk name it in the death line
     hit(h) { h.live = h.live !== false; this.hz.push(h); return h; }
+    // a warning: a red zone over exactly where an attack will land, filling up until it does (dur seconds)
+    mark(o) { const m = { t: 0, dur: 0.5, ...o }; this.marks.push(m); return m; }
+    // a pickup centred on (x, y): heart (+1 life), boots (speed), sword (parries one hit), feather (double jump),
+    // candle (more light), laser (one shot: its aim sweeps until you press DOWN). o.fake: looks the same but bites ('bite'), curses your boots ('slow') or flips your
+    // controls ('invert') or snuffs the light ('dark'); only the real ones sparkle. o.life: it fades after that many seconds.
+    pickup(type, x, y, o = {}) {
+      const k = { kind: 'pickup', type, x: x - 0.4, y: y - 0.4, w: 0.8, h: 0.8, fake: o.fake || null, life: o.life || 0, t: 0, gone: false };
+      this.pickups.push(k); return k;
+    }
+    take(p, k) {
+      k.gone = true; this.cur = p;
+      burst(k.x + 0.4, k.y + 0.4, k.fake ? C.danger : C.portal, 14, 6);
+      if (k.fake === 'bite') { this.say(`that is not a ${k.type}`); return this.kill(p, 'pickup', k); }
+      if (k.fake === 'slow') { this.curseT = 3; this.boostT = 0; this.say('cursed boots'); sfx.trap(); return; }
+      if (k.fake === 'invert') { this.invertT = 3.5; this.say('wrong way!'); sfx.trap(); return; }
+      if (k.fake === 'dark') { this.darkT = 3; this.lightT = 0; this.say('it went out'); sfx.trap(); return; }
+      sfx.reveal();
+      if (k.type === 'heart') { this.lives = Math.min(MAX_LIVES, this.lives + 1); this.say('+1 life'); }
+      else if (k.type === 'boots') { this.boostT = 5; this.curseT = 0; this.say('speed!'); }
+      else if (k.type === 'sword') { p.parry = true; this.say('parry ready'); }
+      else if (k.type === 'feather') { p.djT = 8; p.airJump = true; this.say('double jump'); }
+      else if (k.type === 'candle') { this.lightT = 9; this.say('more light'); }
+      else if (k.type === 'laser') { p.laser = { a: -Math.PI / 2, dir: 1 }; this.say('THE LAZER! press DOWN'); }
+    }
     freeze(sec) { this.freezeT = Math.max(this.freezeT, sec); }
     atStart(fn) { this.startFns.push(fn); }
     firstVisit(id) { return !save.seen[id]; }
@@ -640,6 +674,7 @@
       }
       for (const b of this.bubbles) b.t += dt;
       this.bubbles = this.bubbles.filter((b) => b.t < 1.4);
+      this.stepPowers(dt);
 
       for (let i = this.timers.length - 1; i >= 0; i--) {
         const tm = this.timers[i];
@@ -665,6 +700,20 @@
       if (live()) for (const p of this.active()) this.stepPlayer(p, dt);
       if (live() && this.chained) this.chain();
       if (live()) for (const p of this.active()) { this.checkContacts(p); if (!live() || this.qte) break; }
+    }
+
+    // power-up timers (they only touch speedMul / invert while one is running), pickups fading, warnings filling
+    stepPowers(dt) {
+      for (const k of ['boostT', 'curseT', 'invertT', 'lightT', 'darkT']) if (this[k] > 0) this[k] -= dt;
+      if (this.boostT > 0 || this.curseT > 0) { this.speedMul = this.curseT > 0 ? 0.55 : 1.5; this.powSpeed = true; }
+      else if (this.powSpeed) { this.speedMul = 1; this.powSpeed = false; }
+      if (this.invertT > 0) { this.invert = true; this.powInvert = true; }
+      else if (this.powInvert) { this.invert = false; this.powInvert = false; }
+      for (const k of this.pickups) { k.t += dt; if (k.life && k.t > k.life) k.gone = true; }
+      this.pickups = this.pickups.filter((k) => !k.gone);
+      if (this.beam && (this.beam.t += dt) > 0.35) this.beam = null;
+      for (const m of this.marks) m.t += dt;
+      this.marks = this.marks.filter((m) => m.t < m.dur && !m.gone);
     }
 
     updateButtons(dt) {
@@ -793,7 +842,11 @@
       p.buf -= dt;
       p.coy = p.grounded ? P.coyote : p.coy - dt;
       p.hang -= dt;
-      if (p.buf > 0 && (p.coy > 0 || p.hang > 0)) {
+      if (p.hurtT > 0) p.hurtT -= dt;
+      if (p.djT > 0) p.djT -= dt;
+      const air = !(p.coy > 0 || p.hang > 0) && p.djT > 0 && p.airJump;   // the feather: one more jump in the air
+      if (p.buf > 0 && (p.coy > 0 || p.hang > 0 || air)) {
+        if (air) { p.airJump = false; burst(p.x + p.w / 2, p.y + p.h, '#e8dcc0', 10, 4); }
         p.vy = -P.jump * g; p.buf = 0; p.coy = 0; p.hang = 0; p.grounded = false; p.ground = null;
         p.jumping = !p.lagged; p.cut = false; p.sx = 0.7; p.sy = 1.3; sfx.jump();
         const was = this.cur; this.cur = p;
@@ -801,6 +854,12 @@
         this.cur = was;
       }
       if (p.jumping && !p.cut && !c.jump && p.vy * g < 0) { p.vy *= 0.5; p.cut = true; }
+      // the lazer: its aim sweeps the upper half back and forth, and DOWN fires it along that line
+      if (p.laser) {
+        p.laser.a += p.laser.dir * 1.7 * dt;
+        if (p.laser.a > -0.15) { p.laser.a = -0.15; p.laser.dir = -1; } else if (p.laser.a < -Math.PI + 0.15) { p.laser.a = -Math.PI + 0.15; p.laser.dir = 1; }
+      }
+      if (pr.has('fire')) { pr.delete('fire'); if (p.laser) this.fireLaser(p); }
 
       p.vy = clamp(p.vy + P.grav * g * dt, -P.maxFall, P.maxFall);
       // ladders: hold jump to climb, otherwise slide down slowly
@@ -843,7 +902,7 @@
         }
       }
       p.lastDx = p.x - x0;
-      if (p.ground) { p.lastGround = p.ground; p.groundT = this.t; }
+      if (p.ground) { p.lastGround = p.ground; p.groundT = this.t; p.airJump = true; }
       if (p.grounded && !was) { p.sx = 1.25; p.sy = 0.78; p.jumping = false; }
       p.sx = approach(p.sx, 1, dt * 4); p.sy = approach(p.sy, 1, dt * 4);
     }
@@ -919,14 +978,19 @@
     }
 
     checkContacts(p) {
+      for (const k of this.pickups) if (!k.gone && overlap(p, k)) { this.take(p, k); if (this.over) return; }
+      // blinking after a hit you pass through the boss and its attacks, but you can still strike it while it's
+      // stunned, and still stomp what's meant to be stomped
       for (const b of this.bosses) {
         if (b.dead || b.hidden || !overlap(p, b)) continue;
+        if (p.hurtT > 0 && !(b.stun > 0)) continue;
         if (b.onTouch && b.onTouch(b, p)) return;
         return this.kill(p, 'boss', b);
       }
       for (const h of this.hz) {
         if (!h.live) continue;
         if (h.r ? Math.hypot(h.x - clamp(h.x, p.x, p.x + p.w), h.y - clamp(h.y, p.y, p.y + p.h)) < h.r * 0.85 : overlap(p, h)) {
+          if (p.hurtT > 0 && !h.stompable) continue;
           if (h.onTouch && h.onTouch(h, p)) return;
           return this.kill(p, 'boss', h);
         }
@@ -945,6 +1009,8 @@
           burst(p.x + p.w / 2, p.y + p.h / 2, C.pad, 14, 6);
         }
       }
+      // where a fall puts you back: the last plain ground you stood on unhurt (checked last: a pit's spiky floor never counts)
+      if (p.grounded && p.ground && !(p.hurtT > 0) && !p.ground.crumble && !p.ground.pending && !p.ground.falling && !p.ground.goal && !p.ground.trap) p.safe = { x: p.x, y: p.y };
       for (const d of this.doors) {
         if (d.fake || d.tween || !overlap(p, doorBox(d))) continue;
         // multiplayer: everyone has to make it in; single and chained: one touch is enough
@@ -961,6 +1027,12 @@
     kill(p = this.active()[0], cause = 'restart', src = null) {
       if (this.over || !p || this.cine) return;
       if (admin.god && cause !== 'fell' && cause !== 'restart') return;
+      if (this.lives > 0 && cause !== 'restart') {   // a boss fight: a hit costs a life (or the sword), the last one ends the run
+        if (p.hurtT > 0 && cause !== 'fell') return;
+        if (p.parry && cause !== 'fell') return this.parried(p, src);
+        if (this.lives > 1) return this.hurt(p, cause, src);
+        this.lives = 0;
+      }
       this.over = true; this.victim = p; this.cause = cause;
       const kind = this.deathKind(p, cause, src);
       this.kind = kind;
@@ -997,6 +1069,54 @@
       game.message = { text: `${SKINS[p.idx].name}: ${line}`, t: 0 };
       if (game.strikes >= STRIKES) this.wait(0.9, () => game.strikeOut());
       else this.wait(0.75, () => game.restart());
+    }
+
+    // a hit that isn't the last life: the death line and the lives left, a knock back (or back onto safe ground
+    // after a fall), and 1.6 s of blinking in which nothing hurts. The death count (and so the boss's seed) stays.
+    hurt(p, cause, src) {
+      this.lives--; p.hurtT = 1.6;
+      game.message = { text: `${pick(DEATH[this.deathKind(p, cause, src)])}  ${this.lives} ${this.lives === 1 ? 'life' : 'lives'} left`, t: 0 };
+      sfx.die(); this.shake(0.3, 0.4); burst(p.x + p.w / 2, p.y + p.h / 2, SKINS[p.idx].main, 24, 9);
+      if (cause === 'fell' || cause === 'crushed' || (src && (src.pit || src.respawn))) {   // a pit, a squash, rising lava: back on safe ground
+        const s = (src && src.respawn) || p.safe || { x: this.spawnPt.x, y: this.spawnPt.y - p.h };
+        p.x = s.x; p.y = s.y; p.vx = p.vy = 0;
+      } else {
+        const sx = src && src.x !== undefined ? src.x + (src.r ? 0 : (src.w || 0) / 2) : p.x + p.w / 2 + p.face;
+        p.vx = (Math.sign(p.x + p.w / 2 - sx) || -p.face) * 7; p.vy = -12 * this.g;
+      }
+      p.grounded = false; p.ground = null;
+    }
+    // the beam: a straight line from the knight out of the room. It hits a boss it crosses (b.onBeam, else a plain
+    // hit) and burns away the shootable projectiles on its way
+    fireLaser(p) {
+      const a = p.laser.a, x0 = p.x + p.w / 2, y0 = p.y + p.h / 2, dx = Math.cos(a), dy = Math.sin(a);
+      p.laser = null; sfx.laser(); this.beam = { x0, y0, a, t: 0 };
+      const crosses = (o) => {
+        let t0 = 0, t1 = 99;
+        for (const [d, lo, hi, s0] of [[dx, o.x, o.x + o.w, x0], [dy, o.y, o.y + o.h, y0]]) {
+          if (Math.abs(d) < 1e-9) { if (s0 < lo || s0 > hi) return false; continue; }
+          let a1 = (lo - s0) / d, a2 = (hi - s0) / d;
+          if (a1 > a2) [a1, a2] = [a2, a1];
+          t0 = Math.max(t0, a1); t1 = Math.min(t1, a2);
+          if (t0 > t1) return false;
+        }
+        return true;
+      };
+      for (const h of this.hz) {
+        if (!h.shootable || h.gone || !h.r) continue;
+        const ox = h.x - x0, oy = h.y - y0;
+        if (ox * dx + oy * dy > 0 && Math.abs(ox * dy - oy * dx) < h.r + 0.25) { h.gone = true; burst(h.x, h.y, C.portal, 4, 3); }
+      }
+      for (const b of this.bosses) if (!b.dead && !b.hidden && crosses(b)) { if (b.onBeam) b.onBeam(b); else this.hitBoss(b); }
+    }
+    // the sword takes the hit instead: a projectile is knocked away, and the boss may be staggered (b.onParry)
+    parried(p, src) {
+      p.parry = false; p.hurtT = 0.7; this.freezeT = 0.1; this.cur = p; this.say('PARRY!');
+      sfx.thud(); sfx.reveal(); burst(p.x + p.w / 2, p.y + p.h / 2, '#ffe27a', 22, 9);
+      const b = src && (src.kind === 'boss' ? src : src.boss);
+      if (src && src.boss && src.r) src.gone = true;
+      if (b && b.onParry) b.onParry(b, src);
+      if (src && src.x !== undefined) { p.vx = (Math.sign(p.x + p.w / 2 - (src.x + (src.r ? 0 : (src.w || 0) / 2))) || -p.face) * 6; p.vy = -8 * this.g; p.grounded = false; }
     }
 
     // which DEATH pool fits: looks at the thing that killed p (src) and how p got there
@@ -1646,8 +1766,71 @@
   }
 
   // the knight: a small helmeted blob drawn to its hitbox (0.8 x 0.9 tiles = 12 x 13 art pixels)
+  // pickup icons, centred on screen point (x, y), in art pixels: an outline pass, then the colours
+  const ICON = {
+    heart: [[-4, -3, 3, 1], [1, -3, 3, 1], [-5, -2, 10, 3], [-4, 1, 8, 1], [-3, 2, 6, 1], [-2, 3, 4, 1], [-1, 4, 2, 1]],
+    boots: [[-2, -4, 4, 5], [-2, 1, 6, 3], [-6, -4, 4, 1], [-5, -3, 3, 1]],
+    sword: [[-1, -6, 2, 8], [-3, 2, 6, 1], [-1, 3, 2, 2], [-1, 5, 2, 1]],
+    feather: [[-3, 3, 1, 2], [-2, -1, 3, 4], [-1, -3, 3, 3], [0, -5, 3, 3]],
+    candle: [[-2, -1, 4, 6], [-1, -4, 2, 3], [-3, 5, 6, 1]],
+    laser: [[-5, -2, 8, 4], [3, -1, 3, 2], [-4, 2, 3, 3], [-3, -4, 3, 2]],
+  };
+  const ICON_COL = {
+    heart: ['#e0453a', '#e0453a', '#e0453a', '#e0453a', '#e0453a', '#e0453a', '#e0453a'],
+    boots: ['#8a5a2b', '#8a5a2b', '#e8dcc0', '#e8dcc0'],
+    sword: ['#c8c4d0', '#ffd23f', '#6b4a2b', '#ffd23f'],
+    feather: ['#c8c4d0', '#e8dcc0', '#e8dcc0', '#e8dcc0'],
+    candle: ['#e8dcc0', '#ffae35', '#8a8494'],
+    laser: ['#8a8494', '#c8c4d0', '#6b4a2b', '#ff5a8a'],
+  };
+  function drawIcon(type, x, y) {
+    const cx = sn(x), cy = sn(y), rects = ICON[type];
+    for (const [a, b, w, h] of rects) R(cx + (a - 1) * PX, cy + (b - 1) * PX, (w + 2) * PX, (h + 2) * PX, '#0c080c');
+    rects.forEach(([a, b, w, h], i) => R(cx + a * PX, cy + b * PX, w * PX, h * PX, ICON_COL[type][i]));
+    if (type === 'heart') R(cx - 3 * PX, cy - 2 * PX, PX, PX, '#ff9a8a');
+    if (type === 'candle') R(cx, cy - 5 * PX, PX, PX, '#ffe27a');
+  }
+  // a pickup bobs; a real one has a sparkle going round it (the fakes don't); it blinks out when about to fade
+  function drawPickup(k, t) {
+    if (k.life && k.life - k.t < 1.5) { if (save.calm) ctx.globalAlpha = 0.5; else if (Math.floor(k.t * 8) % 2) return; }
+    const x = (k.x + 0.4) * TILE, y = (k.y + 0.4) * TILE + Math.round(Math.sin(k.t * 3) * 1.5) * PX;
+    drawIcon(k.type, x, y);
+    if (!k.fake) { const [sx, sy] = [[6, -6], [-6, -5], [5, 5], [-5, 4]][Math.floor(k.t * 2.5) % 4]; R(sn(x) + sx * PX, sn(y) + sy * PX, PX, PX, '#fff0a0'); }
+    ctx.globalAlpha = 1;
+  }
+  // the lazer: a dotted aim line while you hold it, then the beam for a moment after you fire
+  function drawLaser(L) {
+    for (const p of L.players) {
+      if (!p.laser || p.dead) continue;
+      const x0 = p.x + p.w / 2, y0 = p.y + p.h / 2, dx = Math.cos(p.laser.a), dy = Math.sin(p.laser.a);
+      for (let d = 0.8; d < 34; d += 0.6) R(sn((x0 + dx * d) * TILE) - 2, sn((y0 + dy * d) * TILE) - 2, 4, 4, '#ff5a8a');
+    }
+    const bm = L.beam;
+    if (!bm) return;
+    ctx.globalAlpha = clamp(1 - bm.t / 0.35, 0, 1) * (save.calm ? 0.6 : 1);
+    const dx = Math.cos(bm.a), dy = Math.sin(bm.a);
+    for (let d = 0.4; d < 34; d += 0.2) {
+      const x = sn((bm.x0 + dx * d) * TILE), y = sn((bm.y0 + dy * d) * TILE);
+      R(x - 6, y - 6, 12, 12, '#ff5a8a'); R(x - 2, y - 2, 4, 4, '#fff0f4');
+    }
+    ctx.globalAlpha = 1;
+  }
+  // an attack warning: a red zone, filling bottom-up as the attack gets closer, with a dashed edge
+  function drawMark(m) {
+    const k = clamp(m.t / m.dur, 0, 1), col = m.col || C.danger;
+    const x = sn(m.x * TILE), y = sn(m.y * TILE), w = Math.max(PX, sn(m.w * TILE)), h = Math.max(PX, sn(m.h * TILE));
+    ctx.globalAlpha = 0.16; R(x, y, w, h, col);
+    ctx.globalAlpha = 0.3; R(x, y + h - sn(h * k), w, sn(h * k), col);
+    ctx.globalAlpha = 0.9;
+    for (let i = 0; i < w; i += 8) { R(x + i, y, Math.min(4, w - i), PX, col); R(x + i, y + h - PX, Math.min(4, w - i), PX, col); }
+    for (let j = 0; j < h; j += 8) { R(x, y + j, PX, Math.min(4, h - j), col); R(x + w - PX, y + j, PX, Math.min(4, h - j), col); }
+    if (m.bang && w >= 16) text('!', x + w / 2, y + Math.min(h, 40) / 2 + 2, 15, col, 'center', null, '#0a080c');
+    ctx.globalAlpha = 1;
+  }
   function drawPlayer(p, L) {
     if (p.dead || p.done) return;
+    // just hit: blinking (reduce flashing: a steady half-fade)
+    if (p.hurtT > 0) { if (save.calm) ctx.globalAlpha = 0.5; else if (Math.floor(p.hurtT * 12) % 2) return; }
     const k = p.w / P.w;   // k < 1: shrunk player
     const cx = sn((p.x + p.w / 2) * TILE), base = sn(L.g > 0 ? (p.y + p.h) * TILE : p.y * TILE);
     const skin = SKINS[p.idx || 0], o = '#0c080c';
@@ -1667,7 +1850,9 @@
       const s = Math.floor(L.t * 10) % 2;
       r(l + 1 + s * 2, 0, 3, 1, o); r(l + w - 4 - s * 2, 0, 3, 1, o);
     }
+    if (p.parry) { const bx = look < 0 ? w + l : l - 3; r(bx, t - 4, 3, 10, o); r(bx + 1, t - 3, 1, 7, '#c8c4d0'); r(bx, t + 3, 3, 1, '#ffd23f'); }   // the sword on its back
     ctx.restore();
+    ctx.globalAlpha = 1;
   }
 
   function drawChain(L) {
@@ -1751,6 +1936,9 @@
       ctx.globalAlpha = 1;
     }
     for (const b of L.bosses) drawBossLit(b, L, t);
+    for (const m of L.marks) drawMark(m);
+    for (const k of L.pickups) drawPickup(k, t);
+    drawLaser(L);
     for (const b of L.bubbles) drawBubble(b, L);
     ctx.restore();
 
@@ -1782,6 +1970,19 @@
       R(bx + 4, by + 4, sn(seg * boss.hp), 8, C.danger); R(bx + 4, by + 4, sn(seg * boss.hp), 2, '#ff8a8a');
       for (let i = boss.perPhase; i < boss.max; i += boss.perPhase) R(bx + 4 + sn(seg * i) - 2, by, 4, 16, '#0c080c');
     }
+    if (L.lives > 0 || (boss && L.mode.players === 1)) {   // lives as hearts, then what you're carrying and for how long
+      const p = L.players[0], hy = barH + 18;
+      for (let i = 0; i < L.lives; i++) drawIcon('heart', 22 + i * 24, hy);
+      let ix = 34 + Math.max(1, L.lives) * 24;
+      const pow = (type, sec, col) => { drawIcon(type, ix, hy); if (sec) text(String(Math.ceil(sec)), ix + 16, hy + 1, 12, col || C.text, 'left', null, '#0a080c'); ix += sec ? 44 : 28; };
+      if (p.parry) pow('sword', 0);
+      if (p.laser) pow('laser', 0);
+      if (L.boostT > 0) pow('boots', L.boostT);
+      if (p.djT > 0) pow('feather', p.djT);
+      if (L.lightT > 0) pow('candle', L.lightT);
+      if (L.curseT > 0) pow('boots', L.curseT, C.danger);
+      if (L.invertT > 0) { text(`WRONG WAY ${Math.ceil(L.invertT)}`, ix, hy + 1, 12, C.danger, 'left', null, '#0a080c'); }
+    }
     // persistent red/green light indicator with 0.45s yellow pre-change warning
     if (L.light) {
       const warn = L.lightEnds && L.lightEnds - L.t < 0.45;
@@ -1805,7 +2006,7 @@
     drawQte(L);
     if (game.message) {
       const m = game.message, a = clamp((1.6 - m.t) / 0.3, 0, 1);
-      ctx.globalAlpha = a; text(m.text, VW / 2, barH + 60, 26, C.danger, 'center', null, '#0a080c'); ctx.globalAlpha = 1;
+      ctx.globalAlpha = a; text(m.text, VW / 2, L.qte ? VH - 60 : barH + 60, 26, C.danger, 'center', null, '#0a080c'); ctx.globalAlpha = 1;
     }
     ctx.fillStyle = 'rgba(10,8,12,0.8)'; ctx.fillRect(0, VH - 28, VW, 28);
     const hint = padCount ? 'stick move · A jump · Y restart · start levels' : !touchEl.hidden && !two ? '◀ ▶ move · ▲ jump · R restart · ESC levels' : `${two ? 'P1 A D W · P2 ← → ↑' : '← → move · space jump'} · R restart · esc levels · M mute`;
@@ -2238,6 +2439,8 @@
     else if (game.state === 'play') drawLevel(game.level);
     else if (game.state === 'cutscene') drawCut(game.cut);
     else drawEnd(game.time);
+    const fire = game.state === 'play' && !!game.level.players[0].laser;   // the touch FIRE button, only while you hold the lazer
+    if (fireBtn && fireBtn.hidden === fire) fireBtn.hidden = !fire;
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

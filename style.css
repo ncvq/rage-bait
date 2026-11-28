@@ -11,6 +11,7 @@ canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edge
 
 #touch { position: fixed; inset: auto 0 0 0; display: flex; justify-content: space-between; padding: 16px; pointer-events: none; }
 #touch[hidden] { display: none; }
+#touch button[hidden] { display: none; }
 #touch .pad-left, #touch .pad-right { display: flex; gap: 14px; align-items: flex-end; pointer-events: auto; }
 /* stone buttons with a pixel bevel, to match the dungeon */
 #touch button {

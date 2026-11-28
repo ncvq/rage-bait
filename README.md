@@ -29,11 +29,12 @@ Each mode keeps its own level progress.
 |---------|---------------|---------------------------|---------------------------|
 | Move    | ← → or A D    | A D                       | ← →                       |
 | Jump    | Space, ↑, W, Z (hold to jump higher) | W, Space | ↑ |
+| Fire the lazer (boss pickup) | ↓ or S | | |
 
 R restarts, Esc opens level select, M mutes. On the mode screen, L picks a level and P opens the knights screen: local profiles (N new, E rename, X delete), each with its own save, ranked by furthest level and by deaths.
 
 ` (backtick) on the title or mode screen opens the **admin panel**: play any level, unlock all, god mode, slow motion (1x / 0.5x / 0.25x), and reset save data. Its settings last for the session only; levels played with unlock-all on don't save progress, and N skips the current level.
-On touch devices, on-screen buttons appear for single player. Progress and death counts are saved in `localStorage`.
+On touch devices, on-screen buttons appear for single player (a ▼ FIRE button shows while you hold the lazer). Progress and death counts are saved in `localStorage`.
 
 ## Courses
 
@@ -54,7 +55,11 @@ Each mode has its own 10-level course and keeps its own progress.
 | 9 | Input Lag | jumps are delayed... until they aren't |
 | 10 | The Warden | boss: make the armour charge into the wall, then strike |
 
-Every tenth single-player level is a boss, and they are meant to be extremely hard: The Warden (10), The Undertaker (20), Old Gnasher (30) and The Mimic (40). Each has its own intro and defeat cutscene, its own music, and moves differently on every attempt. You can't attack: dodge one of its attacks so it hurts itself, then touch the stunned boss and hit the STRIKE keys in time. Grabs mean mashing jump to break free. Six hits in three phases, and dying keeps the phase you reached.
+Every tenth single-player level is a boss, and they are meant to be extremely hard: The Warden (10), The Undertaker (20), Old Gnasher (30) and The Mimic (40). Each has its own intro and defeat cutscene, its own music, and moves differently on every attempt. You can't attack: dodge one of its attacks so it hurts itself, then touch the stunned boss and hit the STRIKE keys in time. Grabs mean mashing jump to break free. Six hits in three phases, and it has to be done in one run: you get 5 lives (a hit costs one), and losing the last one starts the fight over from phase 1.
+
+The arenas have platforms full of traps (one crumbles, one isn't really there, one pops spikes if you stand on it too long) and pickups that pop up and fade: hearts (+1 life), speed boots, a sword that parries one hit (parry a melee attack and the boss staggers), a feather for a double jump, and in the crypt a candle for more light. Some pickups are fakes; only the real ones sparkle. A red zone marks where each attack will land, and the bosses fake you out: a stunned-looking boss with its eyes still lit is only playing dead. Camping on the scaffolds doesn't work either: the Warden vaults up onto yours and lobs its halberd at you.
+
+The Mimic is the final exam. In phase 1 it's a chest on legs that hides among crates and hexes your controls (WRONG WAY). In phase 2 it grows wings and fills the room with coin barrages (rings, spirals, aimed fans, a rain with one gap), and the only way to hurt it in the air is THE LAZER: a pickup whose aim sweeps back and forth until you press DOWN to fire. Phase 3 is all of that in the dark, with the floor turning to lava every few seconds (get up on the rock) and more hexes.
 
 **Multiplayer**: co-op puzzles with stacked trolls, harder than single player. Both players must enter the portal.
 

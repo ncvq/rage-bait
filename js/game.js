@@ -1799,7 +1799,7 @@
     ctx.globalAlpha = 1;
   }
   // the lazer: a dotted aim line while you hold it, then the beam for a moment after you fire
-  function drawLaser(L) {
+  function drawLazer(L) {
     for (const p of L.players) {
       if (!p.laser || p.dead) continue;
       const x0 = p.x + p.w / 2, y0 = p.y + p.h / 2, dx = Math.cos(p.laser.a), dy = Math.sin(p.laser.a);
@@ -1938,7 +1938,7 @@
     for (const b of L.bosses) drawBossLit(b, L, t);
     for (const m of L.marks) drawMark(m);
     for (const k of L.pickups) drawPickup(k, t);
-    drawLaser(L);
+    drawLazer(L);
     for (const b of L.bubbles) drawBubble(b, L);
     ctx.restore();
 

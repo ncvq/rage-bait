@@ -311,7 +311,7 @@
   const touch = { left: false, right: false, jump: false, fire: false };
   const pad = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
   // online play (see netOpen): on = a lockstep game is running, me = which player this browser is
-  const net = { on: false, ws: null, host: false, me: 0, code: '', view: 'pick', sel: 0, note: '', err: '', delay: 0, tick: 0, sent: 0, q: [], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, top: 1 };
+  const net = { on: false, ws: null, host: false, me: 0, code: '', view: 'pick', sel: 0, note: '', err: '', delay: 0, tick: 0, sent: 0, q: [], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, top: 1, rtt: 0, pings: 0 };
   const padPrev = [{}, {}];
   let padCount = 0, hadPad = false;
   const KEYMAP = {
@@ -2298,7 +2298,8 @@
   // `delay` ticks later on both sides; no tick runs before both players' inputs for it are in. The 2-player sim
   // is deterministic (fixed STEP, no Math.random, no save data), so both stay identical; a position hash every
   // half second catches a drift (e.g. Math.hypot differing between browsers) and restarts the level on both.
-  const NET_URL = '';   // '' = the relay on this same site (wrangler.jsonc); set 'wss://<worker>/net' if the game is hosted elsewhere
+  // the deployed relay (npx wrangler deploy). Pages, file:// and the Worker itself all use it; a page on localhost (wrangler dev) uses its own
+  const NET_URL = 'wss://master-baiter.gungonjohnrevel.workers.dev/net';
   const NET_ROWS = [
     { label: 'OFFLINE', sub: 'one keyboard or 2 controllers', act() { playMode(); } },
     { label: 'HOST ONLINE', sub: 'get a code for your partner', act() { netOpen(Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 24)]).join(''), true); } },
@@ -2311,8 +2312,7 @@
   const netHash = () => `${game.idx}:` + game.level.players.map((p) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)},${p.dead ? 1 : 0}`).join(':');
   function netOpen(code, host) {
     netEnd('');
-    const base = NET_URL || (/^https?:$/.test(location.protocol) ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/net` : '');
-    if (!base) { net.note = 'online play needs the hosted game (opened from a file it has no server)'; return; }
+    const base = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? `ws://${location.host}/net` : NET_URL;
     let ws;
     try { ws = new WebSocket(`${base}/${code}${host ? '?host=1' : ''}`); } catch (e) { net.note = "couldn't reach the server."; return; }
     Object.assign(net, { ws, host, code, view: 'wait', err: '', note: host ? 'waiting for your partner...' : 'connecting...' });
@@ -2324,11 +2324,13 @@
     if (m.t === 'in') m.i.forEach((v, k) => net.q[them].set(m.s + k, v));
     else if (m.t === 'h') netCheck(m.k, m.h);
     else if (m.t === 'sync') net.sync = m;
-    else if (m.t === 'peer') { if (net.host) netSend({ t: 'ping', at: performance.now() }); else net.note = 'connected. starting...'; }
+    else if (m.t === 'peer') { if (net.host) { net.rtt = 0; net.pings = 0; netSend({ t: 'ping', at: performance.now() }); } else net.note = 'connected. starting...'; }
     else if (m.t === 'ping') netSend({ t: 'pong', at: m.at, prog: save.progress });
     else if (m.t === 'menu') net.menu = m.on;
-    else if (m.t === 'pong') {   // the host sets the input delay from the round trip: half of it in ticks, plus some slack for jitter
-      const go = { t: 'go', mode: game.mode, idx: game.reached() - 1, d: clamp(Math.ceil((performance.now() - m.at) * 0.06) + 4, 6, 36), prog: save.progress };
+    else if (m.t === 'pong') {   // the host pings 3 times; the input delay is half the slowest round trip in ticks, plus slack for frames and jitter
+      net.rtt = Math.max(net.rtt, performance.now() - m.at);
+      if (++net.pings < 3) { netSend({ t: 'ping', at: performance.now() }); return; }
+      const go = { t: 'go', mode: game.mode, idx: game.reached() - 1, d: clamp(Math.ceil(net.rtt * 0.06) + 7, 8, 40), prog: save.progress };
       netSend(go); netGo({ ...go, prog: m.prog });   // each side keeps the other's progress (it unlocks levels)
     } else if (m.t === 'go') netGo(m);
     else if (m.t === 'left') netEnd('your partner left.');

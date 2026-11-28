@@ -11,7 +11,7 @@ No build step. Open `index.html` in a browser, or serve the folder:
 python3 -m http.server 8000
 ```
 
-then visit http://localhost:8000. Online 2-player needs the relay server (see [Online play](#online-play)); everything else works from a file or any static server.
+then visit http://localhost:8000. Online 2-player connects to the deployed relay (see [Online play](#online-play)) from anywhere except localhost, where it expects `wrangler dev`.
 
 ## Modes
 
@@ -27,7 +27,7 @@ Each mode keeps its own level progress.
 
 Picking Multiplayer or Special asks **OFFLINE** (one keyboard or 2 controllers, as before), **HOST ONLINE** or **JOIN ONLINE**. The host gets a 4-letter room code and the partner types it in. The game starts at the host's saved level, with the host as RED and the guest as BLUE. Online, every movement key, a controller or the touch buttons move your own knight. R restarts the level for both of you. Esc opens the level select, and while it's open your partner's game waits and tells them why. Either of you can pick a level, and it takes you both there. The unlocked levels go up to the furthest either of you had reached when you joined, plus anything you clear together. LEAVE (X) on that screen leaves the room, which ends it for both.
 
-How it works: both browsers run the whole game and swap only their inputs (lockstep). Every input is played a few ticks late on both sides, so the two games stay identical. The delay is set from a ping when the game starts (about half the round trip, plus some slack), and if one side falls behind, the other waits and shows "waiting for your partner...". Twice a second the host compares the knights' positions with the guest's. If they ever differ, the level restarts on both.
+How it works: both browsers run the whole game and swap only their inputs (lockstep). Every input is played a few ticks late on both sides, so the two games stay identical. The delay is set from three pings when the game starts: half the slowest round trip, plus 7 ticks of slack for frame timing and jitter. Through the live relay that came to about 150 ms, and if one side falls behind, the other waits and shows "waiting for your partner...". Twice a second the host compares the knights' positions with the guest's. If they ever differ, the level restarts on both.
 
 ### Hosting the relay (Cloudflare)
 
@@ -38,7 +38,7 @@ npx wrangler dev      # try it: open http://localhost:8787 in two tabs, host in 
 npx wrangler deploy   # publish
 ```
 
-If the game stays somewhere else (Cloudflare Pages, itch.io), deploy the Worker anyway and set `NET_URL` at the top of the online section in `js/game.js` to `wss://<your-worker>.workers.dev/net`. Opened from a file, the game has no relay and says so.
+The game itself is on Cloudflare Pages (`rage-bait-8h2.pages.dev`, built from `main`), which only serves files. So the relay is this Worker, deployed separately at `master-baiter.gungonjohnrevel.workers.dev`. `NET_URL` in `js/game.js` points there, so online play works from Pages, from the Worker's own copy of the game, and from a file. A page served from `localhost` uses its own server instead, so `wrangler dev` tests the local relay. Pages doesn't deploy the Worker: after changing `server/relay.mjs`, run `npx wrangler deploy`.
 
 Cost: each player sends about 60 small messages a second while playing. Durable Objects bill incoming WebSocket messages at 20 per request, so an hour of online play is about 21,600 requests.
 

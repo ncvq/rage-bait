@@ -102,7 +102,7 @@ const root = path.resolve(__dirname, '..');
   for (const c of code) B.down('Key' + c, c.toLowerCase()), B.up('Key' + c, c.toLowerCase());   // typed on the keyboard
   chk(B.R.net.code === code, `typed "${B.R.net.code}", wanted "${code}"`);
   B.R.key('Enter');
-  run(1);
+  run(2);   // three pings through the lag, then go
   chk(A.R.net.on && B.R.net.on && A.R.game.state === 'play' && B.R.game.state === 'play', `did not start: host ${A.R.game.state}/${A.R.net.on}, guest ${B.R.game.state}/${B.R.net.on} "${B.R.net.note}"`);
   chk(A.R.game.idx === 3 && B.R.game.idx === 3 && B.R.game.mode === 'multi', `guest is on ${B.R.game.mode} ${B.R.game.idx + 1}, host on ${A.R.game.idx + 1}`);
   chk(A.R.net.me === 0 && B.R.net.me === 1 && A.R.net.delay === B.R.net.delay, `roles ${A.R.net.me}/${B.R.net.me}, delay ${A.R.net.delay}/${B.R.net.delay}`);

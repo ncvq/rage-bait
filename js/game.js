@@ -311,7 +311,7 @@
   const touch = { left: false, right: false, jump: false, fire: false };
   const pad = [{ left: false, right: false, jump: false }, { left: false, right: false, jump: false }, { left: false, right: false, jump: false }];
   // online play (see netOpen): on = a lockstep game is running, me = which player this browser is
-  const net = { on: false, ws: null, host: false, me: 0, code: '', view: 'pick', sel: 0, note: '', err: '', delay: 0, tick: 0, sent: 0, q: [], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, top: 1, rtt: 0, pings: 0, pred: null };
+  const net = { on: false, ws: null, host: false, me: 0, code: '', view: 'pick', sel: 0, note: '', err: '', delay: 0, tick: 0, sent: 0, q: [], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, top: 1, rtt: 0, pings: 0, pred: null, lanes: [], out: [] };
   const padPrev = [{}, {}];
   let padCount = 0, hadPad = false;
   const KEYMAP = {
@@ -2317,22 +2317,22 @@
   ];
   const NET_LEAVE = { x: VW - 180, y: 10, w: 166, h: 36 };   // on the level select, online
   const netRow = (i) => ({ x: VW / 2 - 200, y: 140 + i * 54, w: 400, h: 46 });
-  const netSend = (m) => { if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify(m)); };
+  const netSend = (m, lanes) => { const s = JSON.stringify(m); for (const w of lanes ? [net.ws, ...net.lanes] : [net.ws]) if (w && w.readyState === 1) w.send(s); };
+  const netBase = () => (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? `ws://${location.host}/net` : NET_URL);
   const netHash = () => `${game.idx}:` + game.level.players.map((p) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)},${p.dead ? 1 : 0}`).join(':');
   function netOpen(code, host) {
     netEnd('');
-    const base = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? `ws://${location.host}/net` : NET_URL;
     let ws;
-    try { ws = new WebSocket(`${base}/${code}${host ? '?host=1' : ''}`); } catch (e) { net.note = "couldn't reach the server."; return; }
+    try { ws = new WebSocket(`${netBase()}/${code}${host ? '?host=1' : ''}`); } catch (e) { net.note = "couldn't reach the server."; return; }
     Object.assign(net, { ws, host, code, view: 'wait', err: '', note: host ? 'waiting for your partner...' : 'connecting...' });
     ws.onmessage = (e) => { if (net.ws === ws) netMsg(JSON.parse(e.data)); };
     ws.onclose = () => { if (net.ws === ws) netEnd(net.err || (net.on ? 'lost the connection.' : "couldn't reach the server.")); };
   }
   function netMsg(m) {
     const them = 1 - net.me;
-    if (m.t === 'in') m.i.forEach((v, k) => net.q[them].set(m.s + k, v));
+    if (m.t === 'in') m.i.forEach((v, k) => { const t = m.s + k; if (t >= net.tick && !net.q[them].has(t)) net.q[them].set(t, v); });   // first copy wins (netLanes)
     else if (m.t === 'h') netCheck(m.k, m.h);
-    else if (m.t === 'sync') net.sync = m;
+    else if (m.t === 'sync') { if (m.k > net.after) net.sync = m; }   // copies of one already done are ignored
     else if (m.t === 'peer') { if (net.host) { net.rtt = 0; net.pings = 0; netSend({ t: 'ping', at: performance.now() }); } else net.note = 'connected. starting...'; }
     else if (m.t === 'ping') netSend({ t: 'pong', at: m.at, prog: save.progress, snappy: !!save.snappy });
     else if (m.t === 'menu') net.menu = m.on;
@@ -2351,20 +2351,34 @@
     Object.assign(net, { on: true, me, delay: m.d[me], tick: 0, sent: m.d[me], pred: null, q: [new Map(), new Map()], hs: new Map(), sync: null, after: -1, restart: false, pick: -1, stall: 0, menu: false, note: '' });
     net.top = Math.min(course(m.mode).length, Math.max(save.progress[m.mode] || 1, (m.prog || {})[m.mode] || 1));   // the same on both sides
     for (const i of [0, 1]) for (let t = 0; t < m.d[i]; t++) net.q[i].set(t, 0);   // each player's first ticks: nothing pressed
-    acc = 0; pressed[2].clear();
+    acc = 0; pressed[2].clear(); net.out = [];
+    netLanes();
     game.setMode(m.mode); game.start(m.idx);
+  }
+  // Two spare sockets into the room, for inputs (and resyncs, which must not fall behind them): every input message goes
+  // out on all three and the first copy in wins. One connection stalls now and then (TCP holds everything behind a lost
+  // packet, and some routes are just slow), three rarely at once. Measured from the Philippines: one-way 99th percentile 200-1700 ms on a single connection,
+  // 120-200 ms for the first of three. A lane that fails only loses its copies (and an older relay refuses them).
+  function netLanes() {
+    net.lanes = [1, 2].map((k) => {
+      let ws;
+      try { ws = new WebSocket(`${netBase()}/${net.code}?lane=${k}${net.host ? '&host=1' : ''}`); } catch (e) { return null; }
+      ws.onmessage = (e) => { const m = JSON.parse(e.data); if (net.lanes.includes(ws) && (m.t === 'in' || m.t === 'sync')) netMsg(m); };
+      return ws;
+    });
   }
   // the host compares its hash for tick k with the guest's (whichever comes first waits for the other)
   function netCheck(k, h) {
     if (k <= net.after) return;   // from before the last resync
     if (!net.hs.has(k)) { net.hs.set(k, h); return; }
     const mine = net.hs.get(k); net.hs.delete(k);
-    if (mine !== h && !net.sync) { net.sync = { t: 'sync', k: net.sent, idx: game.idx }; netSend(net.sync); }   // the guest can't be past tick `sent` yet
+    // the guest can't be past tick `sent` yet: it goes out on every lane, each in order, ahead of the input for that tick
+    if (mine !== h && !net.sync) { net.sync = { t: 'sync', k: net.sent, idx: game.idx }; netSend(net.sync, true); }
   }
   function netEnd(note) {
-    const ws = net.ws;
-    net.ws = null; net.on = false; net.pred = null; net.view = 'pick'; net.note = note;
-    if (ws) { ws.onclose = null; try { ws.close(); } catch (e) { /* ignore */ } }
+    const socks = [net.ws, ...net.lanes];
+    net.ws = null; net.lanes = []; net.on = false; net.pred = null; net.view = 'pick'; net.note = note;
+    for (const ws of socks) if (ws) { ws.onclose = null; try { ws.close(); } catch (e) { /* ignore */ } }
     if (game.cut) { CUT.end(game.cut.s); game.cut = null; }
     if (game.state === 'play' || game.state === 'cutscene' || game.state === 'select') game.state = 'net';
     syncCtl();
@@ -2374,16 +2388,20 @@
     syncCtl();
     const c = ctl[2], held = (c.left ? 1 : 0) | (c.right ? 2 : 0) | (c.jump ? 4 : 0) | (c.fire ? 8 : 0);
     let edge = (pressed[2].has('jump') ? 16 : 0) | (pressed[2].has('fire') ? 32 : 0) | (net.restart ? 64 : 0) | (net.pick + 1) << 7;   // bits 7+: a level pick (index + 1)
-    const s = net.sent, out = [];
+    const out = net.out, n0 = out.length;
     while (net.sent < net.tick + net.delay) { net.q[net.me].set(net.sent++, held | edge); out.push(held | edge); edge = 0; }
-    if (out.length) { pressed[2].clear(); net.restart = false; net.pick = -1; netSend({ t: 'in', s, i: out }); }
+    if (out.length > n0) { pressed[2].clear(); net.restart = false; net.pick = -1; }
+    // a message per 4 ticks (about 30 a second at any frame rate), sent 3 times over (netLanes)
+    if (out.length >= 4) { netSend({ t: 'in', s: net.sent - out.length, i: out }, true); net.out = []; }
     // pacing: running right up to the partner's newest input made every late packet a freeze, and the catch-up after
     // it a jump of up to 12 ticks in one frame. Now catch-up is at most about one extra tick a frame, and when fewer
-    // than 5 frames of the partner's inputs are in hand it runs at half speed instead of running dry (acc keeps the debt)
+    // than 5 frames of the partner's inputs are in hand it runs at 3/4 speed instead of running dry (acc keeps the debt).
+    // Half speed was worse: one side slowing makes its inputs late for the other, which slows too, and deeper slowdowns
+    // feed that loop (replays of recorded Philippines links: slow motion 8-19% of the time at half, 0-5% at 3/4).
     const them = net.q[1 - net.me], per = Math.round(dt / STEP * 4) / 4;   // ticks a frame at full speed
     let ahead = 0;
     while (ahead < 64 && them.has(net.tick + ahead)) ahead++;
-    const max = per * (ahead < per * 5 ? 0.5 : 1.25);
+    const max = per * (ahead < per * 5 ? 0.75 : 1.25);
     let n = 0;
     while (acc >= STEP && n < max && game.state === 'play' && them.has(net.tick)) {
       if (net.sync && net.sync.k === net.tick) {

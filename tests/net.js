@@ -1,6 +1,7 @@
 // Online play check: two copies of the game, each in its own VM, talk through server/relay.mjs (its real Room
 // class, over fake sockets with latency and jitter). They host and join a room, play 25 s of random inputs, and
-// must stay identical tick for tick (through deaths, a restart and a strike-out); then a forced drift must resync, and leaving must end it for both.
+// must stay identical tick for tick (through deaths, a restart, a strike-out and a stalled connection, which the spare
+// lanes must ride out); then a forced drift must resync, and leaving must end it for both.
 // Run: node tests/net.js
 const path = require('path'), fs = require('fs'), vm = require('vm');
 const root = path.resolve(__dirname, '..');
@@ -22,7 +23,7 @@ const root = path.resolve(__dirname, '..');
       get: (id) => {
         if (!rooms.has(id)) {
           const list = [];
-          const ctx = { acceptWebSocket: (ws, tags) => { ws.tags = tags; list.push(ws); }, getWebSockets: (tag) => list.filter((w) => !w.gone && (!tag || w.tags.includes(tag))) };
+          const ctx = { acceptWebSocket: (ws, tags) => { ws.tags = tags; list.push(ws); }, getWebSockets: (tag) => list.filter((w) => !w.gone && (!tag || w.tags.includes(tag))), getTags: (ws) => ws.tags };
           rooms.set(id, new relay.Room(ctx));
         }
         return rooms.get(id);
@@ -53,11 +54,11 @@ const root = path.resolve(__dirname, '..');
         const res = relay.default.fetch({ url, headers: { get: () => 'websocket' } }, env);
         const s = res.webSocket.peer;   // the server end
         this.s = s; this.room = rooms.get(url.match(/\/net\/([A-Z]{4})/)[1]);
-        s.send = (m) => { if (!s.gone) later(delay(), () => this.readyState === 1 && this.onmessage && this.onmessage({ data: m }), this.down); };
+        s.send = (m) => { if (!s.gone) later(delay() + (this.slow || 0), () => this.readyState === 1 && this.onmessage && this.onmessage({ data: m }), this.down); };
         s.close = () => { if (s.gone) return; s.gone = true; later(delay(), () => { if (this.readyState === 1) { this.readyState = 3; if (this.onclose) this.onclose(); } }, this.down); };
         for (const [op, m] of s.buf) s[op](m);
       }
-      send(m) { later(delay(), () => !this.s.gone && this.room.webSocketMessage(this.s, m), this.up); }
+      send(m) { later(delay() + (this.slow || 0), () => !this.s.gone && this.room.webSocketMessage(this.s, m), this.up); }
       close() { this.readyState = 3; later(delay(), () => { if (!this.s.gone) { this.s.gone = true; this.room.webSocketClose(this.s); } }, this.up); }
     };
     sb.window = sb; vm.createContext(sb);
@@ -108,6 +109,9 @@ const root = path.resolve(__dirname, '..');
   chk(A.R.game.idx === 3 && B.R.game.idx === 3 && B.R.game.mode === 'multi', `guest is on ${B.R.game.mode} ${B.R.game.idx + 1}, host on ${A.R.game.idx + 1}`);
   chk(A.R.net.me === 0 && B.R.net.me === 1 && A.R.net.delay - B.R.net.delay === 6, `roles ${A.R.net.me}/${B.R.net.me}, delay host ${A.R.net.delay} / snappy guest ${B.R.net.delay}`);
 
+  const socks = rooms.get(code).ctx.getWebSockets().map((w) => w.tags[0]).sort().join();
+  chk(socks === 'guest,guest-1,guest-2,host,host-1,host-2', `sockets in the room: ${socks}`);
+
   // the guest runs right: its own knight is drawn ahead of the shared game (its queued inputs), the host's isn't predicted on its screen
   B.down('ArrowRight'); run(0.4);
   const bp = B.R.net.pred, br = B.R.game.level.players[1];
@@ -125,13 +129,16 @@ const root = path.resolve(__dirname, '..');
   const KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp'];
   const held = [new Set(), new Set()];
   const t0 = A.R.net.tick, deaths0 = A.R.save.deaths;
-  let lv = null;
+  let lv = null, slowAt = 0;
   run(25, (f) => {
     [A, B].forEach((X, i) => {
       if (rnd() < 0.08) { const k = KEYS[Math.floor(rnd() * 3)]; if (held[i].has(k)) { held[i].delete(k); X.up(k); } else { held[i].add(k); X.down(k); } }
     });
     if (f === 600) { lv = [A.R.game.level, B.R.game.level]; B.down('KeyR'); B.up('KeyR'); }   // the guest restarts: both must
     lag = f > 900 && f < 1100 ? 140 : 45;          // a laggy patch
+    // both main connections stall (half a second extra each way) for 5 s: the lanes still carry the inputs
+    if (f === 1150) { A.R.net.ws.slow = B.R.net.ws.slow = 500; slowAt = A.R.net.tick; }
+    if (f === 1450) { A.R.net.ws.slow = B.R.net.ws.slow = 0; slowAt = A.R.net.tick - slowAt; }
   });
   for (const i of [0, 1]) for (const k of held[i]) [A, B][i].up(k);
   const endIdx = A.R.game.idx;
@@ -141,6 +148,7 @@ const root = path.resolve(__dirname, '..');
   chk(A.R.net.after === -1 && B.R.net.after === -1, `a resync fired during clean play (host ${A.R.net.after}, guest ${B.R.net.after})`);
   const ran = A.R.net.tick - t0;
   chk(ran > 25 * 120 * 0.75, `only ${ran} ticks in 25 s (${(ran / 30).toFixed(0)}% speed)`);   // the guest plays SNAPPY: less delay, more slow-downs
+  chk(slowAt > 5 * 120 * 0.8, `stalled main connections: only ${slowAt} ticks in 5 s (${(slowAt / 6).toFixed(0)}% speed)`);
   chk(A.R.save.deaths > deaths0, 'nobody died in 25 s of random play');   // that both agree on them is in the per-tick states
   chk(lv && A.R.game.level !== lv[0] && B.R.game.level !== lv[1], 'R on the guest did not restart both');
 
